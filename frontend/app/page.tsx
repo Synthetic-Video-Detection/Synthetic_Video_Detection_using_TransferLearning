@@ -8,16 +8,18 @@ export default function SyntheticVideoDetector() {
   const [result, setResult] = useState<{ isSynthetic: boolean; confidence: number } | null>(null);
   const [isDarkMode, setIsDarkMode] = useState(true);
 
-  // --- BẢNG MÀU ĐEN - XÁM CHÌ (DARK SLATE THEME) ---
+  // --- BẢNG MÀU SOLARIZED (WARM WHITE / DARK) ---
+  // Solarized base3 #fdf6e3, base2 #eee8d5, base1 #93a1a1, base0 #839496,
+  // base00 #657b83, base01 #586e75, base02 #073642, base03 #002b36
   const theme = {
-    bgMain: isDarkMode ? "bg-[#090d16]" : "bg-[#f8fafc]",       // Nền chính Đen Tuyền / Trắng Sương
-    bgCard: isDarkMode ? "bg-[#131b2e]" : "bg-[#ffffff]",       // Thẻ container Xám Đen / Trắng
-    textMain: isDarkMode ? "text-[#94a3b8]" : "text-[#475569]",   // Chữ phụ Xám
-    textHeading: isDarkMode ? "text-[#f1f5f9]" : "text-[#0f172a]",// Chữ chính Sáng/Tối
-    textSub: isDarkMode ? "text-[#cbd5e1]" : "text-[#64748b]",    // Chữ mô tả
-    border: isDarkMode ? "border-[#1e293b]" : "border-[#e2e8f0]", // Đường viền mảnh
-    inputBg: isDarkMode ? "bg-[#0f172a]/60" : "bg-[#f1f5f9]",   // Khung upload
-    btnCancel: isDarkMode ? "bg-[#0f172a] hover:bg-[#1e293b] text-[#cbd5e1]" : "bg-[#f1f5f9] hover:bg-[#e2e8f0] text-[#475569]",
+    bgMain: isDarkMode ? "bg-[#002b36]" : "bg-[#fdf6e3]",        // Nền chính base03 / base3 (trắng ấm)
+    bgCard: isDarkMode ? "bg-[#073642]" : "bg-[#eee8d5]",        // Thẻ container base02 / base2
+    textMain: isDarkMode ? "text-[#93a1a1]" : "text-[#657b83]",  // Chữ phụ base1 / base00
+    textHeading: isDarkMode ? "text-[#eee8d5]" : "text-[#586e75]", // Chữ chính base2 / base01
+    textSub: isDarkMode ? "text-[#839496]" : "text-[#586e75]",   // Chữ mô tả base0 / base01
+    border: isDarkMode ? "border-[#0a4a58]" : "border-[#d9d2b8]", // Đường viền mảnh
+    inputBg: isDarkMode ? "bg-[#00212b]/60" : "bg-[#f5efdc]",    // Khung upload
+    btnCancel: isDarkMode ? "bg-[#00212b] hover:bg-[#0a4a58] text-[#93a1a1]" : "bg-[#f5efdc] hover:bg-[#e3dcc4] text-[#586e75]",
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -43,23 +45,23 @@ export default function SyntheticVideoDetector() {
       <header className={`border-b ${theme.border} ${theme.bgMain}/90 backdrop-blur sticky top-0 z-50 transition-colors duration-300`}>
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="bg-[#10b981] text-[#090d16] p-1.5 rounded font-bold text-xs tracking-wider font-sans">
+            <div className="bg-[#859900] text-[#002b36] p-1.5 rounded font-bold text-xs tracking-wider font-sans">
               AI LAB
             </div>
-            <span className={`${theme.textHeading} font-semibold text-lg tracking-wide transition-colors`}>
+            <span className={`${theme.textHeading} font-normal italic text-lg tracking-wide transition-colors`}>
               Synthetic Video Detector
             </span>
           </div>
           <div className="flex items-center gap-4 text-xs font-sans">
-            <span className={`flex items-center gap-1.5 text-[#10b981] ${theme.bgCard} px-3 py-1 rounded-full border ${theme.border} transition-colors`}>
-              <span className="w-2 h-2 rounded-full bg-[#10b981] animate-pulse"></span>
+            <span className={`flex items-center gap-1.5 text-[#859900] ${theme.bgCard} px-3 py-1 rounded-full border ${theme.border} transition-colors`}>
+              <span className="w-2 h-2 rounded-full bg-[#859900] animate-pulse"></span>
               FastAPI Engine Active
             </span>
             <button 
               onClick={() => setIsDarkMode(!isDarkMode)}
               className={`p-2 rounded-full ${theme.bgCard} border ${theme.border} hover:opacity-80 transition-all`}
             >
-              {isDarkMode ? <Sun className="w-4 h-4 text-[#f59e0b]" /> : <Moon className="w-4 h-4 text-[#6366f1]" />}
+              {isDarkMode ? <Sun className="w-4 h-4 text-[#b58900]" /> : <Moon className="w-4 h-4 text-[#6c71c4]" />}
             </button>
           </div>
         </div>
@@ -70,7 +72,7 @@ export default function SyntheticVideoDetector() {
         
         {/* Title Section */}
         <div className="mb-8">
-          <h1 className={`text-3xl font-bold ${theme.textHeading} mb-2 transition-colors`}>
+          <h1 className={`text-3xl font-normal italic ${theme.textHeading} mb-2 transition-colors`}>
             AI Video (Deepfake) Analysis & Detection
           </h1>
           <p className={`${theme.textSub} max-w-3xl text-sm transition-colors`}>
@@ -85,8 +87,8 @@ export default function SyntheticVideoDetector() {
           <div className="lg:col-span-7 space-y-6">
             <div className={`${theme.bgCard} rounded-xl border ${theme.border} p-6 shadow-2xl transition-colors duration-300`}>
               <div className="flex items-center justify-between mb-4">
-                <h2 className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider flex items-center gap-2 font-sans transition-colors`}>
-                  <Play className="w-4 h-4 text-[#10b981]" /> Video Input
+                <h2 className={`text-sm font-normal ${theme.textHeading} uppercase tracking-wider flex items-center gap-2 font-sans transition-colors`}>
+                  <Play className="w-4 h-4 text-[#859900]" /> Video Input
                 </h2>
                 {selectedFile && (
                   <span className={`text-xs ${theme.textSub} truncate max-w-[200px] font-sans`}>
@@ -96,10 +98,10 @@ export default function SyntheticVideoDetector() {
               </div>
 
               {!selectedFile ? (
-                <label className={`border-2 border-dashed ${theme.border} hover:border-[#10b981] ${theme.inputBg} rounded-lg p-12 flex flex-col items-center justify-center cursor-pointer transition-all group`}>
-                  <Upload className="w-12 h-12 text-[#64748b] group-hover:text-[#10b981] mb-4 transition-colors" />
+                <label className={`border-2 border-dashed ${theme.border} hover:border-[#859900] ${theme.inputBg} rounded-lg p-12 flex flex-col items-center justify-center cursor-pointer transition-all group`}>
+                  <Upload className="w-12 h-12 text-[#93a1a1] group-hover:text-[#859900] mb-4 transition-colors" />
                   <p className={`text-sm ${theme.textHeading} font-medium mb-1 transition-colors`}>
-                    Drag and drop video here or <span className="text-[#38bdf8]">browse files</span>
+                    Drag and drop video here or <span className="text-[#268bd2]">browse files</span>
                   </p>
                   <p className={`text-xs ${theme.textMain} font-sans transition-colors`}>Supports MP4, MOV, AVI (Max 100MB)</p>
                   <input type="file" accept="video/*" className="hidden" onChange={handleFileChange} />
@@ -114,7 +116,7 @@ export default function SyntheticVideoDetector() {
                     <button
                       onClick={handleAnalyze}
                       disabled={isAnalyzing}
-                      className="flex-1 bg-[#10b981] hover:brightness-110 text-[#090d16] font-bold py-3 px-6 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                      className="flex-1 bg-[#859900] hover:brightness-110 text-[#002b36] font-bold py-3 px-6 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50"
                     >
                       {isAnalyzing ? (
                         <><RefreshCw className="w-5 h-5 animate-spin" /> Analyzing frames...</>
@@ -139,8 +141,8 @@ export default function SyntheticVideoDetector() {
           <div className="lg:col-span-5 space-y-6">
             <div className={`${theme.bgCard} rounded-xl border ${theme.border} p-6 shadow-2xl h-full flex flex-col justify-between transition-colors duration-300`}>
               <div>
-                <h2 className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider mb-6 flex items-center gap-2 font-sans transition-colors`}>
-                  <BarChart2 className="w-4 h-4 text-[#38bdf8]" /> Analysis Results
+                <h2 className={`text-sm font-normal ${theme.textHeading} uppercase tracking-wider mb-6 flex items-center gap-2 font-sans transition-colors`}>
+                  <BarChart2 className="w-4 h-4 text-[#268bd2]" /> Analysis Results
                 </h2>
 
                 {!result && !isAnalyzing && (
@@ -157,7 +159,7 @@ export default function SyntheticVideoDetector() {
                       <div className={`h-10 ${theme.bgMain} rounded`}></div>
                       <div className={`h-20 ${theme.bgMain} rounded`}></div>
                     </div>
-                    <p className="text-xs text-center text-[#38bdf8] font-sans animate-pulse">
+                    <p className="text-xs text-center text-[#268bd2] font-sans animate-pulse">
                       Extracting Spatial & Temporal Features...
                     </p>
                   </div>
@@ -168,16 +170,16 @@ export default function SyntheticVideoDetector() {
                     {/* Status Badge */}
                     <div className={`p-4 rounded-lg border flex items-center gap-4 ${
                       result.isSynthetic 
-                        ? `${theme.bgMain} border-[#ef4444]/50 text-[#ef4444]` 
-                        : `${theme.bgMain} border-[#10b981]/50 text-[#10b981]`
+                        ? `${theme.bgMain} border-[#dc322f]/50 text-[#dc322f]` 
+                        : `${theme.bgMain} border-[#859900]/50 text-[#859900]`
                     }`}>
                       {result.isSynthetic ? (
-                        <ShieldAlert className="w-10 h-10 shrink-0 text-[#ef4444]" />
+                        <ShieldAlert className="w-10 h-10 shrink-0 text-[#dc322f]" />
                       ) : (
-                        <ShieldCheck className="w-10 h-10 shrink-0 text-[#10b981]" />
+                        <ShieldCheck className="w-10 h-10 shrink-0 text-[#859900]" />
                       )}
                       <div>
-                        <h3 className="font-bold text-lg font-sans">
+                        <h3 className="font-normal italic text-lg font-serif">
                           {result.isSynthetic ? "Synthetic Video Detected" : "Authentic Video (Real)"}
                         </h3>
                         <p className={`text-xs opacity-80 mt-1 font-sans ${theme.textMain}`}>
@@ -196,7 +198,7 @@ export default function SyntheticVideoDetector() {
                       </div>
                       <div className={`w-full ${theme.bgCard} h-3 rounded-full overflow-hidden`}>
                         <div
-                          className="bg-[#ef4444] h-full rounded-full transition-all duration-1000"
+                          className="bg-[#dc322f] h-full rounded-full transition-all duration-1000"
                           style={{ width: `${result.confidence}%` }}
                         ></div>
                       </div>

@@ -8,17 +8,15 @@ export default function SyntheticVideoDetector() {
   const [result, setResult] = useState<{ isSynthetic: boolean; confidence: number } | null>(null);
   const [isDarkMode, setIsDarkMode] = useState(true);
 
-  // --- BẢNG MÀU SOLARIZED (WARM WHITE / DARK) ---
-  // Solarized base3 #fdf6e3, base2 #eee8d5, base1 #93a1a1, base0 #839496,
-  // base00 #657b83, base01 #586e75, base02 #073642, base03 #002b36
+  // --- SOLARIZED THEME (WARM WHITE / DARK) ---
   const theme = {
-    bgMain: isDarkMode ? "bg-[#002b36]" : "bg-[#fdf6e3]",        // Nền chính base03 / base3 (trắng ấm)
-    bgCard: isDarkMode ? "bg-[#073642]" : "bg-[#eee8d5]",        // Thẻ container base02 / base2
-    textMain: isDarkMode ? "text-[#93a1a1]" : "text-[#657b83]",  // Chữ phụ base1 / base00
-    textHeading: isDarkMode ? "text-[#eee8d5]" : "text-[#586e75]", // Chữ chính base2 / base01
-    textSub: isDarkMode ? "text-[#839496]" : "text-[#586e75]",   // Chữ mô tả base0 / base01
-    border: isDarkMode ? "border-[#0a4a58]" : "border-[#d9d2b8]", // Đường viền mảnh
-    inputBg: isDarkMode ? "bg-[#00212b]/60" : "bg-[#f5efdc]",    // Khung upload
+    bgMain: isDarkMode ? "bg-[#002b36]" : "bg-[#fdf6e3]",
+    bgCard: isDarkMode ? "bg-[#073642]" : "bg-[#eee8d5]",
+    textMain: isDarkMode ? "text-[#93a1a1]" : "text-[#657b83]",
+    textHeading: isDarkMode ? "text-[#eee8d5]" : "text-[#586e75]",
+    textSub: isDarkMode ? "text-[#839496]" : "text-[#586e75]",
+    border: isDarkMode ? "border-[#0a4a58]" : "border-[#d9d2b8]",
+    inputBg: isDarkMode ? "bg-[#00212b]/60" : "bg-[#f5efdc]",
     btnCancel: isDarkMode ? "bg-[#00212b] hover:bg-[#0a4a58] text-[#93a1a1]" : "bg-[#f5efdc] hover:bg-[#e3dcc4] text-[#586e75]",
   };
 
@@ -29,13 +27,45 @@ export default function SyntheticVideoDetector() {
     }
   };
 
-  const handleAnalyze = () => {
+  const handleAnalyze = async () => {
     if (!selectedFile) return;
     setIsAnalyzing(true);
-    setTimeout(() => {
+    setResult(null);
+
+    const formData = new FormData();
+    // "file" must match the parameter name defined in FastAPI: `file: UploadFile = File(...)`
+    formData.append("file", selectedFile);
+
+    try {
+      // REPLACE THIS with your active Ngrok URL from Colab
+      const NGROK_URL = "https://countable-plotless-aubrielle.ngrok-free.dev/upload";
+
+      const response = await fetch(NGROK_URL, {
+        method: "POST",
+        body: formData,
+        headers: {
+          "ngrok-skip-browser-warning": "true",
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server returned status: ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      // Expecting FastAPI to return: { isSynthetic: boolean, confidence: number }
+      setResult({
+        isSynthetic: data.label,
+        confidence: data.confidence,
+        probability_ai: data.probability_ai,
+      });
+    } catch (error) {
+      console.error("API Upload Error:", error);
+      alert("Không thể kết nối tới model AI qua Ngrok. Vui lòng kiểm tra lại URL!");
+    } finally {
       setIsAnalyzing(false);
-      setResult({ isSynthetic: true, confidence: 94.8 });
-    }, 2500);
+    }
   };
 
   return (
@@ -45,17 +75,14 @@ export default function SyntheticVideoDetector() {
       <header className={`border-b ${theme.border} ${theme.bgMain}/90 backdrop-blur sticky top-0 z-50 transition-colors duration-300`}>
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="bg-[#859900] text-[#002b36] p-1.5 rounded font-bold text-xs tracking-wider font-sans">
-              AI LAB
-            </div>
-            <span className={`${theme.textHeading} font-normal italic text-lg tracking-wide transition-colors`}>
-              Synthetic Video Detector
+            <span className={`${theme.textHeading} font-bold text-lg tracking-wide transition-colors`}>
+              [Tên dự án]
             </span>
           </div>
           <div className="flex items-center gap-4 text-xs font-sans">
             <span className={`flex items-center gap-1.5 text-[#859900] ${theme.bgCard} px-3 py-1 rounded-full border ${theme.border} transition-colors`}>
               <span className="w-2 h-2 rounded-full bg-[#859900] animate-pulse"></span>
-              FastAPI Engine Active
+              Đã kết nối
             </span>
             <button 
               onClick={() => setIsDarkMode(!isDarkMode)}
@@ -73,10 +100,10 @@ export default function SyntheticVideoDetector() {
         {/* Title Section */}
         <div className="mb-8">
           <h1 className={`text-3xl font-normal italic ${theme.textHeading} mb-2 transition-colors`}>
-            AI Video (Deepfake) Analysis & Detection
+            Synthetic Video Detection
           </h1>
           <p className={`${theme.textSub} max-w-3xl text-sm transition-colors`}>
-            Upload a video file to detect artificial intelligence interventions, face-swapping, or synthetic facial movements using our advanced models.
+            Tải lên một video để dự đoán video có phải được các model Diffusion tạo ra 
           </p>
         </div>
 
@@ -85,7 +112,7 @@ export default function SyntheticVideoDetector() {
           
           {/* Left Column: Input & Media Player */}
           <div className="lg:col-span-7 space-y-6">
-            <div className={`${theme.bgCard} rounded-xl border ${theme.border} p-6 shadow-2xl transition-colors duration-300`}>
+            <div className={`${theme.bgCard} xl border ${theme.border} p-6 transition-colors duration-300`}>
               <div className="flex items-center justify-between mb-4">
                 <h2 className={`text-sm font-normal ${theme.textHeading} uppercase tracking-wider flex items-center gap-2 font-sans transition-colors`}>
                   <Play className="w-4 h-4 text-[#859900]" /> Video Input
@@ -121,7 +148,7 @@ export default function SyntheticVideoDetector() {
                       {isAnalyzing ? (
                         <><RefreshCw className="w-5 h-5 animate-spin" /> Analyzing frames...</>
                       ) : (
-                        <><Cpu className="w-5 h-5" /> Run AI Analysis Model</>
+                        <><Cpu className="w-5 h-5" /> Chạy pipeline AI xử lí</>
                       )}
                     </button>
 
@@ -139,7 +166,7 @@ export default function SyntheticVideoDetector() {
 
           {/* Right Column: Analysis Results */}
           <div className="lg:col-span-5 space-y-6">
-            <div className={`${theme.bgCard} rounded-xl border ${theme.border} p-6 shadow-2xl h-full flex flex-col justify-between transition-colors duration-300`}>
+            <div className={`${theme.bgCard} xl border ${theme.border} p-6 h-full flex flex-col justify-between transition-colors duration-300`}>
               <div>
                 <h2 className={`text-sm font-normal ${theme.textHeading} uppercase tracking-wider mb-6 flex items-center gap-2 font-sans transition-colors`}>
                   <BarChart2 className="w-4 h-4 text-[#268bd2]" /> Analysis Results
@@ -180,12 +207,12 @@ export default function SyntheticVideoDetector() {
                       )}
                       <div>
                         <h3 className="font-normal italic text-lg font-serif">
-                          {result.isSynthetic ? "Synthetic Video Detected" : "Authentic Video (Real)"}
+                          {result.isSynthetic ? "Khả năng cao Video AI" : "Video thật"}
                         </h3>
                         <p className={`text-xs opacity-80 mt-1 font-sans ${theme.textMain}`}>
                           {result.isSynthetic 
-                            ? "Deep learning model detected facial manipulation traces." 
-                            : "No anomalies detected in the video frames."}
+                            ? "Hệ thống phát hiện ra những artifact đặc trưng của các công cụ Diffusion" 
+                            : "Khả năng cao video này là một video không được tạo bởi các công cụ Diffusion"}
                         </p>
                       </div>
                     </div>
@@ -193,13 +220,13 @@ export default function SyntheticVideoDetector() {
                     {/* Gauge Metric */}
                     <div className={`${theme.bgMain} p-4 rounded-lg border ${theme.border} transition-colors`}>
                       <div className="flex justify-between text-xs mb-2 font-sans">
-                        <span className={theme.textSub}>Synthetic Probability:</span>
-                        <span className={`font-bold ${theme.textHeading}`}>{result.confidence}%</span>
+                        <span className={theme.textSub}>Khả năng AI:</span>
+                        <span className={`font-bold ${theme.textHeading}`}>{result.probability_ai*100}%</span>
                       </div>
                       <div className={`w-full ${theme.bgCard} h-3 rounded-full overflow-hidden`}>
                         <div
                           className="bg-[#dc322f] h-full rounded-full transition-all duration-1000"
-                          style={{ width: `${result.confidence}%` }}
+                          style={{ width: `${result.probability_ai*100}%` }}
                         ></div>
                       </div>
                     </div>
@@ -208,25 +235,15 @@ export default function SyntheticVideoDetector() {
                     <div className="space-y-2 text-xs font-sans">
                       <div className={`flex justify-between py-2 border-b ${theme.border}`}>
                         <span className={theme.textMain}>Model Back-end:</span>
-                        <span className={`${theme.textHeading} font-mono`}>FastAPI + EfficientNet-B4</span>
+                        <span className={`${theme.textHeading} font-mono`}>FastAPI + PyTorch Pipeline</span>
                       </div>
                       <div className={`flex justify-between py-2 border-b ${theme.border}`}>
-                        <span className={theme.textMain}>Artifact Score:</span>
-                        <span className={`${theme.textHeading} font-mono`}>0.9482</span>
-                      </div>
-                      <div className="flex justify-between py-2">
-                        <span className={theme.textMain}>Processing Time:</span>
-                        <span className={`${theme.textHeading} font-mono`}>1.82s</span>
+                        <span className={theme.textMain}>Điểm nghi ngờ:</span>
+                        <span className={`${theme.textHeading} font-mono`}>{(result.probability_ai).toFixed(4)}</span>
                       </div>
                     </div>
                   </div>
                 )}
-              </div>
-
-              {/* Footer Note */}
-              <div className={`mt-6 pt-4 border-t ${theme.border} text-[11px] ${theme.textSub} flex justify-between font-sans transition-colors`}>
-                <span>Dark Slate Pro Theme</span>
-                <span>v1.0.3</span>
               </div>
             </div>
           </div>

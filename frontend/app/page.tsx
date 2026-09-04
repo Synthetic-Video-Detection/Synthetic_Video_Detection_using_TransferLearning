@@ -1,12 +1,46 @@
 "use client";
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { Upload, Play, ShieldAlert, ShieldCheck, Cpu, RefreshCw, BarChart2, Sun, Moon } from "lucide-react";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ReferenceLine,
+  ResponsiveContainer,
+} from "recharts";
+
+type ScorePoint = { time: number; score: number };
+
+// Điểm ngưỡng phân loại AI-generated. Khớp với backend (sigmoid > 0.5).
+const THRESHOLD = 0.5;
 
 export default function SyntheticVideoDetector() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [result, setResult] = useState<{ isSynthetic: boolean; confidence: number } | null>(null);
+  const [result, setResult] = useState<{ isSynthetic: boolean; confidence: number; probability_ai?: number } | null>(null);
   const [isDarkMode, setIsDarkMode] = useState(true);
+  const [scoreData, setScoreData] = useState<ScorePoint[]>([]);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  // Tạo object URL đúng MỘT LẦN cho mỗi file, thay vì gọi
+  // URL.createObjectURL() ngay trong JSX — gọi trong JSX tạo ra một blob URL
+  // MỚI ở mỗi lần re-render (ví dụ mỗi lần onTimeUpdate chạy), khiến <video>
+  // nghĩ src đã đổi và tự nạp lại/dừng phát. Đây là lý do video bấm Play không chạy.
+  useEffect(() => {
+    if (!selectedFile) {
+      setVideoUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(selectedFile);
+    setVideoUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [selectedFile]);
 
   // --- SOLARIZED THEME (WARM WHITE / DARK) ---
   const theme = {
@@ -31,6 +65,8 @@ export default function SyntheticVideoDetector() {
     if (!selectedFile) return;
     setIsAnalyzing(true);
     setResult(null);
+    setScoreData([]);
+    setCurrentTime(0);
 
     const formData = new FormData();
     // "file" must match the parameter name defined in FastAPI: `file: UploadFile = File(...)`
@@ -38,7 +74,7 @@ export default function SyntheticVideoDetector() {
 
     try {
       // REPLACE THIS with your active Ngrok URL from Colab
-      const NGROK_URL = "https://countable-plotless-aubrielle.ngrok-free.dev/upload";
+      const NGROK_URL = "https://derived-expanse-roundish.ngrok-free.dev/upload";
 
       const response = await fetch(NGROK_URL, {
         method: "POST",
@@ -60,11 +96,34 @@ export default function SyntheticVideoDetector() {
         confidence: data.confidence,
         probability_ai: data.probability_ai,
       });
+
+      // Expecting FastAPI to ALSO return a per-second (or per-frame) score series, e.g.:
+      // data.scores = [{ time: 0.0, score: 0.98 }, { time: 1.0, score: 0.95 }, ...]
+      if (Array.isArray(data.scores)) {
+        setScoreData(
+          data.scores.map((p: any) => ({ time: Number(p.time), score: Number(p.score) }))
+        );
+      }
     } catch (error) {
       console.error("API Upload Error:", error);
       alert("Không thể kết nối tới model AI qua Ngrok. Vui lòng kiểm tra lại URL!");
     } finally {
       setIsAnalyzing(false);
+    }
+  };
+
+  // Called continuously while the video plays, moves the red "Current Time" line
+  const handleTimeUpdate = () => {
+    if (videoRef.current) {
+      setCurrentTime(videoRef.current.currentTime);
+    }
+  };
+
+  // Tua video tới đúng giây được bấm trên biểu đồ (giống demo NVIDIA)
+  const handleSeek = (time: number) => {
+    if (videoRef.current) {
+      videoRef.current.currentTime = time;
+      setCurrentTime(time);
     }
   };
 
@@ -136,7 +195,16 @@ export default function SyntheticVideoDetector() {
               ) : (
                 <div className="space-y-4">
                   <div className={`relative aspect-video ${theme.bgMain} rounded-lg overflow-hidden border ${theme.border} flex items-center justify-center`}>
-                    <video src={URL.createObjectURL(selectedFile)} controls className="w-full h-full object-contain" />
+                    {videoUrl && (
+                      <video
+                        ref={videoRef}
+                        src={videoUrl}
+                        controls
+                        onTimeUpdate={handleTimeUpdate}
+                        onSeeked={handleTimeUpdate}
+                        className="w-full h-full object-contain"
+                      />
+                    )}
                   </div>
 
                   <div className="flex gap-3 font-sans">
@@ -249,6 +317,93 @@ export default function SyntheticVideoDetector() {
           </div>
 
         </div>
+
+        {/* Real-time Score Chart */}
+        {scoreData.length > 0 && (
+          <div className={`${theme.bgCard} border ${theme.border} p-6 mt-8 transition-colors duration-300`}>
+            <p className={`text-sm ${theme.textSub} mb-4 font-sans transition-colors`}>
+              Play the video to view real-time data below.
+            </p>
+            <h2 className={`text-sm font-normal ${theme.textHeading} uppercase tracking-wider mb-4 flex items-center gap-2 font-sans transition-colors`}>
+              <BarChart2 className="w-4 h-4 text-[#268bd2]" /> Video Analysis
+            </h2>
+            <p className={`text-xs ${theme.textMain} mb-2 font-sans transition-colors`}>
+              Bấm vào biểu đồ để tua video tới đúng thời điểm đó.
+            </p>
+            <ResponsiveContainer width="100%" height={340}>
+              <LineChart
+                data={scoreData}
+                margin={{ top: 10, right: 70, left: 0, bottom: 20 }}
+                onClick={(state: any) => {
+                  if (state && state.activeLabel != null) {
+                    handleSeek(Number(state.activeLabel));
+                  }
+                }}
+                style={{ cursor: "pointer" }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke={isDarkMode ? "#0a4a58" : "#d9d2b8"} />
+                <XAxis
+                  dataKey="time"
+                  type="number"
+                  domain={["dataMin", "dataMax"]}
+                  tick={{ fill: isDarkMode ? "#839496" : "#586e75", fontSize: 12 }}
+                  label={{
+                    value: "Time (seconds)",
+                    position: "bottom",
+                    offset: 0,
+                    fill: isDarkMode ? "#839496" : "#586e75",
+                  }}
+                />
+                <YAxis
+                  domain={[0, 1]}
+                  tick={{ fill: isDarkMode ? "#839496" : "#586e75", fontSize: 12 }}
+                  label={{
+                    value: "Synthetic score",
+                    angle: -90,
+                    position: "insideLeft",
+                    fill: isDarkMode ? "#839496" : "#586e75",
+                  }}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: isDarkMode ? "#073642" : "#eee8d5",
+                    border: `1px solid ${isDarkMode ? "#0a4a58" : "#d9d2b8"}`,
+                    fontSize: 12,
+                  }}
+                  labelFormatter={(t) => `t = ${Number(t).toFixed(2)}s`}
+                  formatter={(v: number) => [Number(v).toFixed(3), "Synthetic score"]}
+                />
+                <Legend verticalAlign="top" align="right" wrapperStyle={{ fontSize: 12, paddingBottom: 8 }} />
+                <Line
+                  type="monotone"
+                  dataKey="score"
+                  name="Synthetic score"
+                  stroke="#859900"
+                  strokeWidth={2}
+                  dot={false}
+                  isAnimationActive={false}
+                />
+                <ReferenceLine
+                  y={THRESHOLD}
+                  stroke={isDarkMode ? "#839496" : "#586e75"}
+                  strokeDasharray="4 4"
+                  label={{
+                    value: "Threshold",
+                    position: "right",
+                    fill: isDarkMode ? "#839496" : "#586e75",
+                    fontSize: 11,
+                  }}
+                />
+                <ReferenceLine
+                  x={currentTime}
+                  stroke="#dc322f"
+                  strokeWidth={2}
+                  label={{ value: "Current Time", position: "top", fill: "#dc322f", fontSize: 11 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
       </main>
     </div>
   );

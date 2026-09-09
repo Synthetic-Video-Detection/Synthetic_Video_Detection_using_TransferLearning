@@ -19,6 +19,8 @@ import {
   Trash2,
   FileSpreadsheet,
   Gauge,
+  FlaskConical,
+  SlidersHorizontal,
 } from "lucide-react";
 import {
   LineChart,
@@ -59,8 +61,9 @@ type BatchItem = {
   error?: string;
 };
 
-// Điểm ngưỡng phân loại AI-generated. Khớp với backend (sigmoid > 0.5).
-const THRESHOLD = 0.5;
+// Ngưỡng mặc định khi mở trang. Có thể chỉnh trực tiếp trên giao diện
+// (xem state `threshold` trong component) — không còn là hằng số cố định.
+const DEFAULT_THRESHOLD = 0.5;
 
 // REPLACE THIS with your active Ngrok URL from Colab
 const NGROK_URL = "https://derived-expanse-roundish.ngrok-free.dev/upload";
@@ -69,6 +72,21 @@ let idCounter = 0;
 function makeId() {
   idCounter += 1;
   return `vid_${Date.now()}_${idCounter}`;
+}
+
+// --------------------------------------------------------------------- //
+// Vì backend trả về "probability_ai" (điểm thô 0..1) song song với "label"
+// (nhãn backend tự chấm ở ngưỡng CỐ ĐỊNH 0.5), toàn bộ phần hiển thị/chấm
+// điểm ở frontend đều nên tính lại nhãn + độ tin cậy từ probability_ai theo
+// đúng threshold người dùng đang chỉnh trên UI — thay vì dùng thẳng "label"
+// gốc từ backend. Nhờ vậy kéo thanh trượt threshold có thể đổi màu/nhãn
+// NGAY LẬP TỨC cho toàn bộ video đã chạy, không cần gọi lại pipeline.
+// --------------------------------------------------------------------- //
+function classifyWithThreshold(result: AnalysisResult, threshold: number) {
+  const p = result.probability_ai ?? (result.isSynthetic ? 1 : 0);
+  const isSynthetic = p > threshold;
+  const confidence = isSynthetic ? p : 1 - p;
+  return { isSynthetic, confidence, probability_ai: p };
 }
 
 // Gọi đúng 1 lần API upload cho 1 file, trả về kết quả chuẩn hóa.
@@ -85,7 +103,17 @@ async function analyzeVideoFile(file: File): Promise<{ result: AnalysisResult; s
   });
 
   if (!response.ok) {
-    throw new Error(`Server returned status: ${response.status}`);
+    // Backend (FastAPI) trả kèm JSON có trường "error" giải thích lý do cụ
+    // thể (ví dụ "Could not sample 8 frames..."), đọc ra để hiện thẳng lên
+    // card lỗi thay vì chỉ hiện mã trạng thái HTTP chung chung.
+    let message = `Server returned status: ${response.status}`;
+    try {
+      const errBody = await response.json();
+      if (errBody?.error) message = errBody.error;
+    } catch {
+      // Backend không trả JSON hợp lệ (vd: lỗi 502/504 từ Ngrok) -> giữ message mặc định
+    }
+    throw new Error(message);
   }
 
   const data = await response.json();
@@ -101,6 +129,72 @@ async function analyzeVideoFile(file: File): Promise<{ result: AnalysisResult; s
     : [];
 
   return { result, scores };
+}
+
+// --------------------------------------------------------------------- //
+// CHẾ ĐỘ TEST (MOCK) — sinh kết quả giả để kiểm tra toàn bộ giao diện
+// (lưới video, viền màu đúng/sai, chỉ số AUROC/Accuracy/..., thanh trượt
+// threshold) mà KHÔNG cần gọi Ngrok/Colab. Dùng PRNG có seed theo tên file
+// (mulberry32) để cùng 1 file luôn ra cùng 1 kết quả giả giữa các lần chạy
+// — tiện để so sánh trước/sau khi chỉnh threshold, thay vì random loạn mỗi
+// lần bấm "Chạy tất cả".
+// --------------------------------------------------------------------- //
+function stringSeed(str: string): number {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
+  }
+  return h;
+}
+
+function mulberry32(seed: number) {
+  let s = seed | 0;
+  return function () {
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// groundTruth (nếu biết từ CSV) chỉ dùng để "lái" điểm giả cho GIỐNG một
+// model hoạt động khá tốt (~80% đúng) thay vì random 50/50 vô nghĩa —
+// hoàn toàn không đọc/không cần backend thật.
+function generateMockResult(file: File, groundTruth?: number): Promise<{ result: AnalysisResult; scores: ScorePoint[] }> {
+  return new Promise((resolve) => {
+    const delay = 350 + Math.random() * 900; // mô phỏng độ trễ mạng/inference cho giống thật
+    setTimeout(() => {
+      const rng = mulberry32(stringSeed(file.name));
+
+      let base: number;
+      if (groundTruth === 1) base = 0.55 + rng() * 0.4; // thiên về AI nhưng có nhiễu
+      else if (groundTruth === 0) base = rng() * 0.4; // thiên về Real nhưng có nhiễu
+      else base = rng(); // không biết nhãn thật -> ngẫu nhiên đều
+
+      const flip = rng() < 0.18; // ~18% khả năng "model giả" đoán sai hẳn, cho giống thật
+      let probability_ai = flip ? 1 - base : base;
+      probability_ai = Math.min(0.99, Math.max(0.01, probability_ai));
+
+      const isSynthetic = probability_ai > 0.5; // nhãn baseline (backend quy ước threshold 0.5)
+      const confidence = isSynthetic ? probability_ai : 1 - probability_ai;
+
+      const duration = 8 + rng() * 40; // thời lượng giả 8-48s
+      const scores: ScorePoint[] = [];
+      for (let t = 0; t <= duration; t += 1) {
+        const noise = (rng() - 0.5) * 0.25;
+        scores.push({ time: Math.round(t * 100) / 100, score: Math.min(1, Math.max(0, probability_ai + noise)) });
+      }
+
+      resolve({
+        result: {
+          isSynthetic,
+          confidence: Math.round(confidence * 10000) / 10000,
+          probability_ai: Math.round(probability_ai * 10000) / 10000,
+        },
+        scores,
+      });
+    }, delay);
+  });
 }
 
 // --------------------------------------------------------------------- //
@@ -182,22 +276,27 @@ type Metrics = {
   fn: number;
   tn: number;
   accuracy: number;
-  precision: number;
-  recall: number;
-  f1: number;
+  // null = không đủ dữ liệu để tính (khác với 0%, vốn là một kết quả đo được)
+  precision: number | null;
+  recall: number | null;
+  f1: number | null;
   auroc: number | null;
+  nPos: number;
+  nNeg: number;
 };
 
 // AUROC được tính bằng công thức Mann–Whitney U (dựa trên xếp hạng
-// probability_ai), không cần thư viện ngoài. Các chỉ số còn lại tính từ
-// ma trận nhầm lẫn ở ngưỡng THRESHOLD hiện tại của model.
-function computeMetrics(items: BatchItem[], labelMap: Map<string, number>): Metrics | null {
+// probability_ai), không phụ thuộc threshold và không cần thư viện ngoài.
+// Các chỉ số còn lại (accuracy/precision/recall/f1) tính từ ma trận nhầm
+// lẫn ở ĐÚNG threshold người dùng đang chỉnh trên UI.
+function computeMetrics(items: BatchItem[], labelMap: Map<string, number>, threshold: number): Metrics | null {
   const evaluable = items
     .filter((it) => it.status === "done" && it.result && labelMap.has(it.file.name))
     .map((it) => {
       const truth = labelMap.get(it.file.name) as number;
-      const pred = it.result!.isSynthetic ? 1 : 0;
-      const score = it.result!.probability_ai ?? pred;
+      const classified = classifyWithThreshold(it.result!, threshold);
+      const pred = classified.isSynthetic ? 1 : 0;
+      const score = classified.probability_ai;
       return { score, pred, truth };
     });
 
@@ -216,9 +315,13 @@ function computeMetrics(items: BatchItem[], labelMap: Map<string, number>): Metr
 
   const n = evaluable.length;
   const accuracy = (tp + tn) / n;
-  const precision = tp + fp > 0 ? tp / (tp + fp) : 0;
-  const recall = tp + fn > 0 ? tp / (tp + fn) : 0;
-  const f1 = precision + recall > 0 ? (2 * precision * recall) / (precision + recall) : 0;
+
+  // Precision không xác định được nếu model không dự đoán "AI" cho video nào (TP+FP=0).
+  // Recall không xác định được nếu tập nhãn không có video "AI" thật nào (TP+FN=0).
+  const precision: number | null = tp + fp > 0 ? tp / (tp + fp) : null;
+  const recall: number | null = tp + fn > 0 ? tp / (tp + fn) : null;
+  const f1: number | null =
+    precision != null && recall != null ? (precision + recall > 0 ? (2 * precision * recall) / (precision + recall) : 0) : null;
 
   const nPos = evaluable.filter((e) => e.truth === 1).length;
   const nNeg = evaluable.filter((e) => e.truth === 0).length;
@@ -242,7 +345,7 @@ function computeMetrics(items: BatchItem[], labelMap: Map<string, number>): Metr
     auroc = (sumRankPos - (nPos * (nPos + 1)) / 2) / (nPos * nNeg);
   }
 
-  return { n, tp, fp, fn, tn, accuracy, precision, recall, f1, auroc };
+  return { n, tp, fp, fn, tn, accuracy, precision, recall, f1, auroc, nPos, nNeg };
 }
 
 // --- Theme type dùng chung cho các component con ---
@@ -257,29 +360,30 @@ type Theme = {
   btnCancel: string;
 };
 
-function ResultSummary({ result, theme }: { result: AnalysisResult; theme: Theme }) {
-  const prob = result.probability_ai ?? 0;
+function ResultSummary({ result, theme, threshold }: { result: AnalysisResult; theme: Theme; threshold: number }) {
+  const classified = classifyWithThreshold(result, threshold);
+  const prob = classified.probability_ai;
   return (
     <div className="space-y-6">
       {/* Status Badge */}
       <div
         className={`p-4 rounded-lg border flex items-center gap-4 ${
-          result.isSynthetic
+          classified.isSynthetic
             ? `${theme.bgMain} border-[#dc322f]/50 text-[#dc322f]`
             : `${theme.bgMain} border-[#859900]/50 text-[#859900]`
         }`}
       >
-        {result.isSynthetic ? (
+        {classified.isSynthetic ? (
           <ShieldAlert className="w-10 h-10 shrink-0 text-[#dc322f]" />
         ) : (
           <ShieldCheck className="w-10 h-10 shrink-0 text-[#859900]" />
         )}
         <div>
           <h3 className={`font-normal italic text-lg ${notoSerif.className}`}>
-            {result.isSynthetic ? "Khả năng cao Video AI" : "Video thật"}
+            {classified.isSynthetic ? "Khả năng cao Video AI" : "Video thật"}
           </h3>
           <p className={`text-xs opacity-80 mt-1 font-sans ${theme.textMain}`}>
-            {result.isSynthetic
+            {classified.isSynthetic
               ? "Hệ thống phát hiện ra những artifact đặc trưng của các công cụ Diffusion"
               : "Khả năng cao video này là một video không được tạo bởi các công cụ Diffusion"}
           </p>
@@ -292,10 +396,16 @@ function ResultSummary({ result, theme }: { result: AnalysisResult; theme: Theme
           <span className={theme.textSub}>Khả năng AI:</span>
           <span className={`font-bold ${theme.textHeading}`}>{(prob * 100).toFixed(1)}%</span>
         </div>
-        <div className={`w-full ${theme.bgCard} h-3 rounded-full overflow-hidden`}>
+        <div className={`relative w-full ${theme.bgCard} h-3 rounded-full overflow-hidden`}>
           <div
             className="bg-[#dc322f] h-full rounded-full transition-all duration-1000"
             style={{ width: `${prob * 100}%` }}
+          ></div>
+          {/* Vạch đánh dấu ngưỡng (threshold) hiện tại trên thanh gauge */}
+          <div
+            className="absolute top-0 bottom-0 w-0.5 bg-white/80"
+            style={{ left: `${threshold * 100}%` }}
+            title={`Threshold: ${(threshold * 100).toFixed(0)}%`}
           ></div>
         </div>
       </div>
@@ -310,6 +420,10 @@ function ResultSummary({ result, theme }: { result: AnalysisResult; theme: Theme
           <span className={theme.textMain}>Điểm nghi ngờ:</span>
           <span className={`${theme.textHeading} font-mono`}>{prob.toFixed(4)}</span>
         </div>
+        <div className={`flex justify-between py-2 border-b ${theme.border}`}>
+          <span className={theme.textMain}>Threshold đang dùng:</span>
+          <span className={`${theme.textHeading} font-mono`}>{threshold.toFixed(2)}</span>
+        </div>
       </div>
     </div>
   );
@@ -320,12 +434,14 @@ function ScoreChart({
   currentTime,
   onSeek,
   isDarkMode,
+  threshold,
   height = 340,
 }: {
   data: ScorePoint[];
   currentTime: number;
   onSeek: (t: number) => void;
   isDarkMode: boolean;
+  threshold: number;
   height?: number;
 }) {
   return (
@@ -383,7 +499,7 @@ function ScoreChart({
           isAnimationActive={false}
         />
         <ReferenceLine
-          y={THRESHOLD}
+          y={threshold}
           stroke={isDarkMode ? "#839496" : "#586e75"}
           strokeDasharray="4 4"
           label={{
@@ -418,9 +534,11 @@ function MetricBox({ label, value, theme }: { label: string; value: string; them
 // - chưa chạy / đang chạy: màu trung tính hoặc xanh dương nhấp nháy
 // - đã chạy NHƯNG không có nhãn CSV để đối chiếu: theo màu nhãn dự đoán (cam = AI, lam = Real)
 // - đã chạy VÀ có nhãn CSV: xanh lá = dự đoán khớp nhãn thật, đỏ = dự đoán sai nhãn thật
+// Nhãn dự đoán luôn tính lại theo `threshold` hiện tại, không dùng "label" gốc từ backend.
 function BatchGridCard({
   item,
   groundTruth,
+  threshold,
   isSelected,
   onSelect,
   onRemove,
@@ -428,12 +546,14 @@ function BatchGridCard({
 }: {
   item: BatchItem;
   groundTruth: number | undefined;
+  threshold: number;
   isSelected: boolean;
   onSelect: () => void;
   onRemove: () => void;
   disableRemove: boolean;
 }) {
-  const predicted = item.status === "done" && item.result ? (item.result.isSynthetic ? 1 : 0) : undefined;
+  const classified = item.status === "done" && item.result ? classifyWithThreshold(item.result, threshold) : null;
+  const predicted = classified ? (classified.isSynthetic ? 1 : 0) : undefined;
   const hasGroundTruth = groundTruth !== undefined;
   const isCorrect = hasGroundTruth && predicted !== undefined ? predicted === groundTruth : undefined;
 
@@ -492,10 +612,10 @@ function BatchGridCard({
       )}
 
       {/* Thanh dưới: nhãn dự đoán + đối chiếu CSV (nếu có) */}
-      {item.status === "done" && item.result && (
+      {item.status === "done" && classified && (
         <div className="absolute bottom-0 inset-x-0 px-2 py-1 bg-black/75 flex items-center justify-between font-sans">
-          <span className={`text-[10px] font-bold ${item.result.isSynthetic ? "text-[#dc322f]" : "text-[#859900]"}`}>
-            {item.result.isSynthetic ? "AI" : "Real"} · {((item.result.probability_ai ?? 0) * 100).toFixed(0)}%
+          <span className={`text-[10px] font-bold ${classified.isSynthetic ? "text-[#dc322f]" : "text-[#859900]"}`}>
+            {classified.isSynthetic ? "AI" : "Real"} · {(classified.probability_ai * 100).toFixed(0)}%
           </span>
           {hasGroundTruth &&
             (isCorrect ? (
@@ -512,6 +632,15 @@ function BatchGridCard({
 export default function SyntheticVideoDetector() {
   const [activeTab, setActiveTab] = useState<"single" | "batch">("single");
   const [isDarkMode, setIsDarkMode] = useState(true);
+
+  // Ngưỡng phân loại — chỉnh được trực tiếp trên UI, áp dụng ngay lập tức
+  // cho toàn bộ kết quả ĐÃ CÓ (không cần chạy lại pipeline) vì ta luôn giữ
+  // nguyên probability_ai thô của từng video.
+  const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD);
+
+  // Chế độ test bằng dữ liệu giả — bật lên để kiểm tra toàn bộ giao diện
+  // khi chưa truy cập được backend (Colab/Ngrok).
+  const [mockMode, setMockMode] = useState(false);
 
   // --- Single video tab state ---
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -594,7 +723,9 @@ export default function SyntheticVideoDetector() {
     setCurrentTime(0);
 
     try {
-      const { result: r, scores } = await analyzeVideoFile(selectedFile);
+      const { result: r, scores } = mockMode
+        ? await generateMockResult(selectedFile)
+        : await analyzeVideoFile(selectedFile);
       setResult(r);
       setScoreData(scores);
     } catch (error) {
@@ -674,13 +805,17 @@ export default function SyntheticVideoDetector() {
     setSelectedBatchId(null);
   };
 
-  // Xử lý 1 video, cập nhật đúng phần tử tương ứng trong danh sách
+  // Xử lý 1 video, cập nhật đúng phần tử tương ứng trong danh sách.
+  // labelMap được truyền vào để chế độ mock "lái" điểm giả theo nhãn CSV
+  // thật (nếu có) cho ra kết quả giống một model thật hơn là random thuần.
   const processOneBatchItem = async (id: string, file: File) => {
     setBatchItems((prev) => prev.map((it) => (it.id === id ? { ...it, status: "processing", error: undefined } : it)));
     setSelectedBatchId(id);
 
     try {
-      const { result: r, scores } = await analyzeVideoFile(file);
+      const { result: r, scores } = mockMode
+        ? await generateMockResult(file, labelMap.get(file.name))
+        : await analyzeVideoFile(file);
       setBatchItems((prev) =>
         prev.map((it) => (it.id === id ? { ...it, status: "done", result: r, scores } : it))
       );
@@ -729,7 +864,7 @@ export default function SyntheticVideoDetector() {
     () => batchItems.filter((it) => labelMap.has(it.file.name)).length,
     [batchItems, labelMap]
   );
-  const metrics = useMemo(() => computeMetrics(batchItems, labelMap), [batchItems, labelMap]);
+  const metrics = useMemo(() => computeMetrics(batchItems, labelMap, threshold), [batchItems, labelMap, threshold]);
 
   return (
     <div
@@ -744,10 +879,17 @@ export default function SyntheticVideoDetector() {
             </span>
           </div>
           <div className="flex items-center gap-4 text-xs font-sans">
-            <span className={`flex items-center gap-1.5 text-[#859900] ${theme.bgCard} px-3 py-1 rounded-full border ${theme.border} transition-colors`}>
-              <span className="w-2 h-2 rounded-full bg-[#859900] animate-pulse"></span>
-              Đã kết nối
-            </span>
+            {mockMode ? (
+              <span className="flex items-center gap-1.5 text-[#b58900] bg-[#b58900]/10 px-3 py-1 rounded-full border border-[#b58900]/50">
+                <FlaskConical className="w-3.5 h-3.5" />
+                Chế độ test (dữ liệu giả)
+              </span>
+            ) : (
+              <span className={`flex items-center gap-1.5 text-[#859900] ${theme.bgCard} px-3 py-1 rounded-full border ${theme.border} transition-colors`}>
+                <span className="w-2 h-2 rounded-full bg-[#859900] animate-pulse"></span>
+                Đã kết nối
+              </span>
+            )}
             <button
               onClick={() => setIsDarkMode(!isDarkMode)}
               className={`p-2 rounded-full ${theme.bgCard} border ${theme.border} hover:opacity-80 transition-all`}
@@ -768,6 +910,48 @@ export default function SyntheticVideoDetector() {
           <p className={`${theme.textSub} max-w-3xl text-sm transition-colors`}>
             Tải lên một video để dự đoán video có phải được các model Diffusion tạo ra
           </p>
+        </div>
+
+        {/* Bảng điều khiển chung: Threshold + Chế độ test — áp dụng cho cả 2 tab */}
+        <div className={`${theme.bgCard} border ${theme.border} rounded-lg p-4 mb-6 flex flex-wrap items-center gap-6 font-sans transition-colors duration-300`}>
+          <div className="flex items-center gap-3 flex-1 min-w-[280px]">
+            <SlidersHorizontal className="w-4 h-4 text-[#268bd2] shrink-0" />
+            <div className="flex-1">
+              <div className="flex justify-between text-xs mb-1">
+                <span className={theme.textSub}>Ngưỡng phân loại (threshold)</span>
+                <span className={`font-bold ${theme.textHeading}`}>{(threshold * 100).toFixed(0)}%</span>
+              </div>
+              <input
+                type="range"
+                min={0.01}
+                max={0.99}
+                step={0.01}
+                value={threshold}
+                onChange={(e) => setThreshold(Number(e.target.value))}
+                className="w-full accent-[#859900] cursor-pointer"
+              />
+              <p className={`text-[11px] ${theme.textSub} mt-1`}>
+                Video có xác suất AI lớn hơn {(threshold * 100).toFixed(0)}% sẽ bị coi là AI-generated. Chỉnh xong áp dụng ngay, không cần chạy lại pipeline.
+              </p>
+            </div>
+          </div>
+
+          <label className="flex items-start gap-2 cursor-pointer shrink-0 max-w-xs">
+            <input
+              type="checkbox"
+              checked={mockMode}
+              onChange={(e) => setMockMode(e.target.checked)}
+              className="accent-[#b58900] mt-0.5"
+            />
+            <span>
+              <span className={`text-xs font-bold flex items-center gap-1 ${mockMode ? "text-[#b58900]" : theme.textHeading}`}>
+                <FlaskConical className="w-3.5 h-3.5" /> Chế độ test (dữ liệu giả)
+              </span>
+              <span className={`text-[11px] ${theme.textSub} block mt-0.5`}>
+                Sinh kết quả giả để test giao diện, không cần gọi backend Ngrok/Colab.
+              </span>
+            </span>
+          </label>
         </div>
 
         {/* Tabs */}
@@ -882,7 +1066,7 @@ export default function SyntheticVideoDetector() {
                       </div>
                     )}
 
-                    {result && !isAnalyzing && <ResultSummary result={result} theme={theme} />}
+                    {result && !isAnalyzing && <ResultSummary result={result} theme={theme} threshold={threshold} />}
                   </div>
                 </div>
               </div>
@@ -900,7 +1084,13 @@ export default function SyntheticVideoDetector() {
                 <p className={`text-xs ${theme.textMain} mb-2 font-sans transition-colors`}>
                   Bấm vào biểu đồ để tua video tới đúng thời điểm đó.
                 </p>
-                <ScoreChart data={scoreData} currentTime={currentTime} onSeek={handleSeek} isDarkMode={isDarkMode} />
+                <ScoreChart
+                  data={scoreData}
+                  currentTime={currentTime}
+                  onSeek={handleSeek}
+                  isDarkMode={isDarkMode}
+                  threshold={threshold}
+                />
               </div>
             )}
           </>
@@ -993,6 +1183,7 @@ export default function SyntheticVideoDetector() {
                       key={item.id}
                       item={item}
                       groundTruth={labelMap.get(item.file.name)}
+                      threshold={threshold}
                       isSelected={selectedBatchId === item.id}
                       onSelect={() => setSelectedBatchId(item.id)}
                       onRemove={() => removeBatchItem(item.id)}
@@ -1011,20 +1202,31 @@ export default function SyntheticVideoDetector() {
                     <Gauge className="w-4 h-4 text-[#268bd2]" /> Chỉ số đánh giá
                   </h2>
                   <span className={`text-xs ${theme.textSub} font-sans`}>
-                    Tính trên {metrics.n} video có nhãn CSV khớp tên file
+                    Tính trên {metrics.n} video có nhãn CSV khớp tên file · threshold {(threshold * 100).toFixed(0)}%
                   </span>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                   <MetricBox label="AUROC" value={metrics.auroc != null ? metrics.auroc.toFixed(3) : "N/A"} theme={theme} />
                   <MetricBox label="Accuracy" value={`${(metrics.accuracy * 100).toFixed(1)}%`} theme={theme} />
-                  <MetricBox label="Precision" value={`${(metrics.precision * 100).toFixed(1)}%`} theme={theme} />
-                  <MetricBox label="Recall" value={`${(metrics.recall * 100).toFixed(1)}%`} theme={theme} />
-                  <MetricBox label="F1-score" value={`${(metrics.f1 * 100).toFixed(1)}%`} theme={theme} />
+                  <MetricBox label="Precision" value={metrics.precision != null ? `${(metrics.precision * 100).toFixed(1)}%` : "N/A"} theme={theme} />
+                  <MetricBox label="Recall" value={metrics.recall != null ? `${(metrics.recall * 100).toFixed(1)}%` : "N/A"} theme={theme} />
+                  <MetricBox label="F1-score" value={metrics.f1 != null ? `${(metrics.f1 * 100).toFixed(1)}%` : "N/A"} theme={theme} />
                 </div>
                 <p className={`text-[11px] ${theme.textSub} font-sans mt-3`}>
                   Ma trận nhầm lẫn: TP={metrics.tp} · FP={metrics.fp} · FN={metrics.fn} · TN={metrics.tn}
-                  {metrics.auroc == null && " · AUROC cần cả 2 lớp (AI và Real) trong tập có nhãn khớp"}
                 </p>
+                {(metrics.nPos === 0 || metrics.nNeg === 0) && (
+                  <p className={`text-[11px] text-[#b58900] font-sans mt-1`}>
+                    {metrics.nPos === 0
+                      ? "Tập nhãn khớp hiện không có video nào gắn nhãn AI (1) — nên Recall, F1 và AUROC hiển thị N/A vì không đủ dữ liệu để tính, không phải model làm sai."
+                      : "Tập nhãn khớp hiện không có video nào gắn nhãn Real (0) — nên AUROC hiển thị N/A vì không đủ dữ liệu để tính."}
+                  </p>
+                )}
+                {metrics.precision === 0 && metrics.tp === 0 && metrics.fp > 0 && (
+                  <p className={`text-[11px] text-[#dc322f] font-sans mt-1`}>
+                    Precision 0% có nghĩa: trong {metrics.fp} video model đoán là "AI", không cái nào thật sự là AI theo CSV — thử kéo threshold cao hơn để giảm báo động giả.
+                  </p>
+                )}
               </div>
             )}
 
@@ -1091,7 +1293,7 @@ export default function SyntheticVideoDetector() {
                     )}
 
                     {selectedBatchItem.status === "done" && selectedBatchItem.result && (
-                      <ResultSummary result={selectedBatchItem.result} theme={theme} />
+                      <ResultSummary result={selectedBatchItem.result} theme={theme} threshold={threshold} />
                     )}
                   </div>
                 </div>
@@ -1121,6 +1323,7 @@ export default function SyntheticVideoDetector() {
                   currentTime={batchCurrentTime}
                   onSeek={handleBatchSeek}
                   isDarkMode={isDarkMode}
+                  threshold={threshold}
                 />
               </div>
             )}

@@ -21,6 +21,7 @@ import {
   Gauge,
   FlaskConical,
   SlidersHorizontal,
+  Download,
 } from "lucide-react";
 import {
   LineChart,
@@ -346,6 +347,54 @@ function computeMetrics(items: BatchItem[], labelMap: Map<string, number>, thres
   }
 
   return { n, tp, fp, fn, tn, accuracy, precision, recall, f1, auroc, nPos, nNeg };
+}
+
+// --------------------------------------------------------------------- //
+// Xuất CSV kết quả: tên video, nhãn dự đoán (theo threshold hiện tại),
+// synthetic score thô, và nếu có nhãn CSV gốc thì kèm luôn nhãn thật + so
+// khớp đúng/sai — để dễ đối chiếu ngoài Excel/Sheets.
+// --------------------------------------------------------------------- //
+function escapeCsvField(value: string): string {
+  if (/[",\n\r]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
+}
+
+function buildResultsCsv(items: BatchItem[], labelMap: Map<string, number>, threshold: number): string {
+  const header = ["name", "predicted_label", "synthetic_score", "ground_truth_label", "match"];
+  const rows = items
+    .filter((it) => it.status === "done" && it.result)
+    .map((it) => {
+      const classified = classifyWithThreshold(it.result!, threshold);
+      const predictedLabel = classified.isSynthetic ? "AI" : "Real";
+      const groundTruthRaw = labelMap.get(it.file.name);
+      const groundTruthLabel = groundTruthRaw === undefined ? "" : groundTruthRaw === 1 ? "AI" : "Real";
+      const match =
+        groundTruthRaw === undefined ? "" : (classified.isSynthetic ? 1 : 0) === groundTruthRaw ? "correct" : "incorrect";
+      return [
+        escapeCsvField(it.file.name),
+        predictedLabel,
+        classified.probability_ai.toFixed(4),
+        groundTruthLabel,
+        match,
+      ].join(",");
+    });
+  return [header.join(","), ...rows].join("\r\n");
+}
+
+function downloadResultsCsv(items: BatchItem[], labelMap: Map<string, number>, threshold: number) {
+  const csvContent = buildResultsCsv(items, labelMap, threshold);
+  // Thêm BOM (\uFEFF) để Excel nhận đúng UTF-8, không bị lỗi font tiếng Việt khi mở file.
+  const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `ket_qua_threshold_${Math.round(threshold * 100)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // --- Theme type dùng chung cho các component con ---
@@ -912,6 +961,51 @@ export default function SyntheticVideoDetector() {
           </p>
         </div>
 
+        {/* Bảng chỉ số đánh giá — đặt TRÊN thanh threshold để kéo thử ngưỡng
+            là thấy ngay số liệu đổi theo, không cần cuộn xuống lưới video. */}
+        {metrics && (
+          <div className={`${theme.bgCard} border ${theme.border} rounded-lg p-6 mb-6 transition-colors duration-300`}>
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <h2 className={`text-sm font-normal ${theme.textHeading} uppercase tracking-wider flex items-center gap-2 font-sans transition-colors`}>
+                <Gauge className="w-4 h-4 text-[#268bd2]" /> Chỉ số đánh giá
+              </h2>
+              <div className="flex items-center gap-3 font-sans">
+                <span className={`text-xs ${theme.textSub}`}>
+                  Tính trên {metrics.n} video có nhãn CSV khớp tên file · threshold {(threshold * 100).toFixed(0)}%
+                </span>
+                <button
+                  onClick={() => downloadResultsCsv(batchItems, labelMap, threshold)}
+                  className={`text-xs px-3 py-1.5 rounded-lg border ${theme.border} ${theme.btnCancel} flex items-center gap-1.5 transition-colors shrink-0`}
+                >
+                  <Download className="w-3.5 h-3.5" /> Xuất CSV kết quả
+                </button>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              <MetricBox label="AUROC" value={metrics.auroc != null ? metrics.auroc.toFixed(3) : "N/A"} theme={theme} />
+              <MetricBox label="Accuracy" value={`${(metrics.accuracy * 100).toFixed(1)}%`} theme={theme} />
+              <MetricBox label="Precision" value={metrics.precision != null ? `${(metrics.precision * 100).toFixed(1)}%` : "N/A"} theme={theme} />
+              <MetricBox label="Recall" value={metrics.recall != null ? `${(metrics.recall * 100).toFixed(1)}%` : "N/A"} theme={theme} />
+              <MetricBox label="F1-score" value={metrics.f1 != null ? `${(metrics.f1 * 100).toFixed(1)}%` : "N/A"} theme={theme} />
+            </div>
+            <p className={`text-[11px] ${theme.textSub} font-sans mt-3`}>
+              Ma trận nhầm lẫn: TP={metrics.tp} · FP={metrics.fp} · FN={metrics.fn} · TN={metrics.tn}
+            </p>
+            {(metrics.nPos === 0 || metrics.nNeg === 0) && (
+              <p className={`text-[11px] text-[#b58900] font-sans mt-1`}>
+                {metrics.nPos === 0
+                  ? "Tập nhãn khớp hiện không có video nào gắn nhãn AI (1) — nên Recall, F1 và AUROC hiển thị N/A vì không đủ dữ liệu để tính, không phải model làm sai."
+                  : "Tập nhãn khớp hiện không có video nào gắn nhãn Real (0) — nên AUROC hiển thị N/A vì không đủ dữ liệu để tính."}
+              </p>
+            )}
+            {metrics.precision === 0 && metrics.tp === 0 && metrics.fp > 0 && (
+              <p className={`text-[11px] text-[#dc322f] font-sans mt-1`}>
+                Precision 0% có nghĩa: trong {metrics.fp} video model đoán là "AI", không cái nào thật sự là AI theo CSV — thử kéo threshold cao hơn để giảm báo động giả.
+              </p>
+            )}
+          </div>
+        )}
+
         {/* Bảng điều khiển chung: Threshold + Chế độ test — áp dụng cho cả 2 tab */}
         <div className={`${theme.bgCard} border ${theme.border} rounded-lg p-4 mb-6 flex flex-wrap items-center gap-6 font-sans transition-colors duration-300`}>
           <div className="flex items-center gap-3 flex-1 min-w-[280px]">
@@ -1139,6 +1233,13 @@ export default function SyntheticVideoDetector() {
                     )}
                   </button>
                   <button
+                    onClick={() => downloadResultsCsv(batchItems, labelMap, threshold)}
+                    disabled={doneCount === 0}
+                    className={`text-xs px-3 py-2 rounded-lg border ${theme.border} ${theme.btnCancel} flex items-center gap-2 transition-colors disabled:opacity-40`}
+                  >
+                    <Download className="w-3.5 h-3.5" /> Xuất CSV
+                  </button>
+                  <button
                     onClick={clearBatch}
                     disabled={isBatchRunning || batchItems.length === 0}
                     className={`text-xs px-3 py-2 rounded-lg border ${theme.border} ${theme.btnCancel} flex items-center gap-2 transition-colors disabled:opacity-40`}
@@ -1193,42 +1294,6 @@ export default function SyntheticVideoDetector() {
                 </div>
               )}
             </div>
-
-            {/* Bảng chỉ số đánh giá so với nhãn CSV */}
-            {metrics && (
-              <div className={`${theme.bgCard} border ${theme.border} p-6 transition-colors duration-300`}>
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className={`text-sm font-normal ${theme.textHeading} uppercase tracking-wider flex items-center gap-2 font-sans transition-colors`}>
-                    <Gauge className="w-4 h-4 text-[#268bd2]" /> Chỉ số đánh giá
-                  </h2>
-                  <span className={`text-xs ${theme.textSub} font-sans`}>
-                    Tính trên {metrics.n} video có nhãn CSV khớp tên file · threshold {(threshold * 100).toFixed(0)}%
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-                  <MetricBox label="AUROC" value={metrics.auroc != null ? metrics.auroc.toFixed(3) : "N/A"} theme={theme} />
-                  <MetricBox label="Accuracy" value={`${(metrics.accuracy * 100).toFixed(1)}%`} theme={theme} />
-                  <MetricBox label="Precision" value={metrics.precision != null ? `${(metrics.precision * 100).toFixed(1)}%` : "N/A"} theme={theme} />
-                  <MetricBox label="Recall" value={metrics.recall != null ? `${(metrics.recall * 100).toFixed(1)}%` : "N/A"} theme={theme} />
-                  <MetricBox label="F1-score" value={metrics.f1 != null ? `${(metrics.f1 * 100).toFixed(1)}%` : "N/A"} theme={theme} />
-                </div>
-                <p className={`text-[11px] ${theme.textSub} font-sans mt-3`}>
-                  Ma trận nhầm lẫn: TP={metrics.tp} · FP={metrics.fp} · FN={metrics.fn} · TN={metrics.tn}
-                </p>
-                {(metrics.nPos === 0 || metrics.nNeg === 0) && (
-                  <p className={`text-[11px] text-[#b58900] font-sans mt-1`}>
-                    {metrics.nPos === 0
-                      ? "Tập nhãn khớp hiện không có video nào gắn nhãn AI (1) — nên Recall, F1 và AUROC hiển thị N/A vì không đủ dữ liệu để tính, không phải model làm sai."
-                      : "Tập nhãn khớp hiện không có video nào gắn nhãn Real (0) — nên AUROC hiển thị N/A vì không đủ dữ liệu để tính."}
-                  </p>
-                )}
-                {metrics.precision === 0 && metrics.tp === 0 && metrics.fp > 0 && (
-                  <p className={`text-[11px] text-[#dc322f] font-sans mt-1`}>
-                    Precision 0% có nghĩa: trong {metrics.fp} video model đoán là "AI", không cái nào thật sự là AI theo CSV — thử kéo threshold cao hơn để giảm báo động giả.
-                  </p>
-                )}
-              </div>
-            )}
 
             {/* Chi tiết video đang chọn */}
             {selectedBatchItem ? (

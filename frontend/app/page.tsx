@@ -1,5 +1,5 @@
 "use client";
-import React, { useMemo, useState, useRef, useEffect } from "react";
+import React, { useCallback, useMemo, useState, useRef, useEffect } from "react";
 import { Noto_Serif } from "next/font/google";
 import {
   Upload,
@@ -22,6 +22,8 @@ import {
   FlaskConical,
   SlidersHorizontal,
   Download,
+  Database,
+  AlertTriangle,
 } from "lucide-react";
 import {
   LineChart,
@@ -52,22 +54,49 @@ type AnalysisResult = { isSynthetic: boolean; confidence: number; probability_ai
 
 type BatchStatus = "queued" | "processing" | "done" | "error";
 
+// Một weight (bộ trọng số) khả dụng trên Google Drive — mỗi weight tương
+// ứng 1 thư mục con trong WEIGHTS_ROOT ở backend, chứa best_model.pt +
+// scaler.joblib. Danh sách này được poll định kỳ từ backend nên khi có
+// weight mới (hoặc weight bị ghi đè) trên Drive, nó tự xuất hiện/tự cập
+// nhật trên UI mà không cần refresh trang hay restart Colab.
+type WeightInfo = {
+  id: string;
+  name: string;
+  updated_at: number; // unix seconds — thời điểm best_model.pt/scaler.joblib được sửa lần cuối
+  ready: boolean;
+};
+
+// Kết quả chạy pipeline với MỘT weight cụ thể cho MỘT video. `error` chỉ
+// set khi riêng weight này lỗi (vd bị xoá khỏi Drive giữa chừng) — các
+// weight khác trong cùng lần chạy vẫn có thể thành công bình thường.
+type WeightResult = { result: AnalysisResult; scores: ScorePoint[]; error?: string };
+
 type BatchItem = {
   id: string;
   file: File;
   url: string;
   status: BatchStatus;
-  result?: AnalysisResult;
-  scores?: ScorePoint[];
-  error?: string;
+  // Kết quả của video này, theo từng weight đã chọn khi chạy — 1 request
+  // /upload duy nhất trả về kết quả cho TẤT CẢ weight đã chọn cùng lúc
+  // (backend chỉ trích xuất đặc trưng CLIP+DINOv2 một lần rồi chấm điểm
+  // với từng weight, không chạy lại backbone cho mỗi weight).
+  resultsByWeight?: Record<string, WeightResult>;
+  error?: string; // lỗi của CẢ request (vd mất kết nối) — khác với lỗi riêng từng weight
 };
 
 // Ngưỡng mặc định khi mở trang. Có thể chỉnh trực tiếp trên giao diện
 // (xem state `threshold` trong component) — không còn là hằng số cố định.
 const DEFAULT_THRESHOLD = 0.5;
 
-// REPLACE THIS with your active Ngrok URL from Colab
-const NGROK_URL = "https://derived-expanse-roundish.ngrok-free.dev/upload";
+// REPLACE THIS with your active Ngrok base URL from Colab — KHÔNG có dấu
+// "/" ở cuối và KHÔNG kèm "/upload" (các hàm gọi API bên dưới tự nối path).
+const NGROK_BASE = "https://derived-expanse-roundish.ngrok-free.dev";
+
+// Tần suất frontend tự hỏi backend "hiện có những weight nào" — đây là cơ
+// chế "tự cập nhật khi Drive có weight mới": backend quét lại thư mục
+// Drive mỗi khi nhận request này, nên chỉ cần đợi tối đa khoảng thời gian
+// này là danh sách weight trên UI sẽ khớp với Drive.
+const WEIGHTS_POLL_INTERVAL_MS = 8000;
 
 let idCounter = 0;
 function makeId() {
@@ -90,12 +119,32 @@ function classifyWithThreshold(result: AnalysisResult, threshold: number) {
   return { isSynthetic, confidence, probability_ai: p };
 }
 
-// Gọi đúng 1 lần API upload cho 1 file, trả về kết quả chuẩn hóa.
-async function analyzeVideoFile(file: File): Promise<{ result: AnalysisResult; scores: ScorePoint[] }> {
+function formatWeightTime(unixSeconds: number): string {
+  if (!unixSeconds) return "";
+  const d = new Date(unixSeconds * 1000);
+  return d.toLocaleString("vi-VN", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+// Gọi API lấy danh sách weight hiện có trên Drive (backend tự quét
+// WEIGHTS_ROOT mỗi lần nhận request này).
+async function fetchAvailableWeights(): Promise<WeightInfo[]> {
+  const response = await fetch(`${NGROK_BASE}/weights`, {
+    headers: { "ngrok-skip-browser-warning": "true" },
+  });
+  if (!response.ok) throw new Error(`Server returned status: ${response.status}`);
+  const data = await response.json();
+  return Array.isArray(data.weights) ? data.weights : [];
+}
+
+// Gọi đúng 1 lần API upload cho 1 file, kèm danh sách weight muốn chạy —
+// backend trích xuất đặc trưng video MỘT LẦN rồi chấm điểm với từng weight,
+// trả về kết quả cho tất cả weight trong cùng 1 response.
+async function analyzeVideoFile(file: File, weightIds: string[]): Promise<Record<string, WeightResult>> {
   const formData = new FormData();
   formData.append("file", file);
+  formData.append("weights", weightIds.join(","));
 
-  const response = await fetch(NGROK_URL, {
+  const response = await fetch(`${NGROK_BASE}/upload/`, {
     method: "POST",
     body: formData,
     headers: {
@@ -118,27 +167,35 @@ async function analyzeVideoFile(file: File): Promise<{ result: AnalysisResult; s
   }
 
   const data = await response.json();
+  const rawResults: Record<string, any> = data.results ?? {};
+  const out: Record<string, WeightResult> = {};
 
-  const result: AnalysisResult = {
-    isSynthetic: data.label,
-    confidence: data.confidence,
-    probability_ai: data.probability_ai,
-  };
+  for (const wid of weightIds) {
+    const r = rawResults[wid];
+    if (!r || r.error) {
+      out[wid] = {
+        result: { isSynthetic: false, confidence: 0, probability_ai: 0 },
+        scores: [],
+        error: r?.error ?? "Không có kết quả trả về cho weight này.",
+      };
+      continue;
+    }
+    out[wid] = {
+      result: { isSynthetic: r.label, confidence: r.confidence, probability_ai: r.probability_ai },
+      scores: Array.isArray(r.scores) ? r.scores.map((p: any) => ({ time: Number(p.time), score: Number(p.score) })) : [],
+    };
+  }
 
-  const scores: ScorePoint[] = Array.isArray(data.scores)
-    ? data.scores.map((p: any) => ({ time: Number(p.time), score: Number(p.score) }))
-    : [];
-
-  return { result, scores };
+  return out;
 }
 
 // --------------------------------------------------------------------- //
 // CHẾ ĐỘ TEST (MOCK) — sinh kết quả giả để kiểm tra toàn bộ giao diện
 // (lưới video, viền màu đúng/sai, chỉ số AUROC/Accuracy/..., thanh trượt
-// threshold) mà KHÔNG cần gọi Ngrok/Colab. Dùng PRNG có seed theo tên file
-// (mulberry32) để cùng 1 file luôn ra cùng 1 kết quả giả giữa các lần chạy
-// — tiện để so sánh trước/sau khi chỉnh threshold, thay vì random loạn mỗi
-// lần bấm "Chạy tất cả".
+// threshold, TAB weight) mà KHÔNG cần gọi Ngrok/Colab. Dùng PRNG có seed
+// theo tên file + id weight (mulberry32) để cùng 1 file + 1 weight luôn ra
+// cùng 1 kết quả giả giữa các lần chạy — và các weight khác nhau ra kết quả
+// khác nhau, để test việc chuyển tab có hoạt động đúng.
 // --------------------------------------------------------------------- //
 function stringSeed(str: string): number {
   let h = 0;
@@ -158,14 +215,24 @@ function mulberry32(seed: number) {
   };
 }
 
+// Danh sách weight giả cố định cho chế độ test — đủ 2 cái để kiểm tra UI
+// chọn nhiều weight + chuyển tab kết quả hoạt động đúng.
+function generateMockWeightsList(): WeightInfo[] {
+  const now = Date.now() / 1000;
+  return [
+    { id: "mock_v1", name: "CLIP-DinoResidual-BiLSTM (v1, giả lập)", updated_at: now - 3600, ready: true },
+    { id: "mock_v2", name: "CLIP-DinoResidual-BiLSTM (v2, giả lập)", updated_at: now - 300, ready: true },
+  ];
+}
+
 // groundTruth (nếu biết từ CSV) chỉ dùng để "lái" điểm giả cho GIỐNG một
 // model hoạt động khá tốt (~80% đúng) thay vì random 50/50 vô nghĩa —
 // hoàn toàn không đọc/không cần backend thật.
-function generateMockResult(file: File, groundTruth?: number): Promise<{ result: AnalysisResult; scores: ScorePoint[] }> {
+function generateMockResult(file: File, weightId: string, groundTruth?: number): Promise<WeightResult> {
   return new Promise((resolve) => {
     const delay = 350 + Math.random() * 900; // mô phỏng độ trễ mạng/inference cho giống thật
     setTimeout(() => {
-      const rng = mulberry32(stringSeed(file.name));
+      const rng = mulberry32(stringSeed(`${file.name}::${weightId}`));
 
       let base: number;
       if (groundTruth === 1) base = 0.55 + rng() * 0.4; // thiên về AI nhưng có nhiễu
@@ -196,6 +263,17 @@ function generateMockResult(file: File, groundTruth?: number): Promise<{ result:
       });
     }, delay);
   });
+}
+
+async function generateMockResultsForWeights(
+  file: File,
+  weightIds: string[],
+  groundTruth?: number
+): Promise<Record<string, WeightResult>> {
+  const entries = await Promise.all(
+    weightIds.map(async (wid) => [wid, await generateMockResult(file, wid, groundTruth)] as const)
+  );
+  return Object.fromEntries(entries);
 }
 
 // --------------------------------------------------------------------- //
@@ -289,13 +367,22 @@ type Metrics = {
 // AUROC được tính bằng công thức Mann–Whitney U (dựa trên xếp hạng
 // probability_ai), không phụ thuộc threshold và không cần thư viện ngoài.
 // Các chỉ số còn lại (accuracy/precision/recall/f1) tính từ ma trận nhầm
-// lẫn ở ĐÚNG threshold người dùng đang chỉnh trên UI.
-function computeMetrics(items: BatchItem[], labelMap: Map<string, number>, threshold: number): Metrics | null {
+// lẫn ở ĐÚNG threshold người dùng đang chỉnh trên UI — VÀ chỉ tính trên kết
+// quả của weight đang được xem (tab weight hiện tại), vì mỗi weight cho ra
+// một bộ điểm số khác nhau.
+function computeMetrics(
+  items: BatchItem[],
+  labelMap: Map<string, number>,
+  threshold: number,
+  weightId: string | null
+): Metrics | null {
+  if (!weightId) return null;
+
   const evaluable = items
-    .filter((it) => it.status === "done" && it.result && labelMap.has(it.file.name))
+    .filter((it) => it.status === "done" && it.resultsByWeight?.[weightId] && !it.resultsByWeight[weightId].error && labelMap.has(it.file.name))
     .map((it) => {
       const truth = labelMap.get(it.file.name) as number;
-      const classified = classifyWithThreshold(it.result!, threshold);
+      const classified = classifyWithThreshold(it.resultsByWeight![weightId].result, threshold);
       const pred = classified.isSynthetic ? 1 : 0;
       const score = classified.probability_ai;
       return { score, pred, truth };
@@ -350,9 +437,10 @@ function computeMetrics(items: BatchItem[], labelMap: Map<string, number>, thres
 }
 
 // --------------------------------------------------------------------- //
-// Xuất CSV kết quả: tên video, nhãn dự đoán (theo threshold hiện tại),
-// synthetic score thô, và nếu có nhãn CSV gốc thì kèm luôn nhãn thật + so
-// khớp đúng/sai — để dễ đối chiếu ngoài Excel/Sheets.
+// Xuất CSV kết quả: mỗi dòng là (tên video, weight, nhãn dự đoán theo
+// threshold hiện tại, synthetic score thô, nhãn thật nếu có, đúng/sai) —
+// XUẤT CHO TẤT CẢ weight đã chạy (không chỉ weight đang xem trên tab), để
+// dễ so sánh nhiều weight cùng lúc ngoài Excel/Sheets.
 // --------------------------------------------------------------------- //
 function escapeCsvField(value: string): string {
   if (/[",\n\r]/.test(value)) {
@@ -362,24 +450,32 @@ function escapeCsvField(value: string): string {
 }
 
 function buildResultsCsv(items: BatchItem[], labelMap: Map<string, number>, threshold: number): string {
-  const header = ["name", "predicted_label", "synthetic_score", "ground_truth_label", "match"];
-  const rows = items
-    .filter((it) => it.status === "done" && it.result)
-    .map((it) => {
-      const classified = classifyWithThreshold(it.result!, threshold);
+  const header = ["name", "weight", "predicted_label", "synthetic_score", "ground_truth_label", "match"];
+  const rows: string[] = [];
+
+  items.forEach((it) => {
+    if (it.status !== "done" || !it.resultsByWeight) return;
+    Object.entries(it.resultsByWeight).forEach(([wid, entry]) => {
+      if (entry.error) return;
+      const classified = classifyWithThreshold(entry.result, threshold);
       const predictedLabel = classified.isSynthetic ? "AI" : "Real";
       const groundTruthRaw = labelMap.get(it.file.name);
       const groundTruthLabel = groundTruthRaw === undefined ? "" : groundTruthRaw === 1 ? "AI" : "Real";
       const match =
         groundTruthRaw === undefined ? "" : (classified.isSynthetic ? 1 : 0) === groundTruthRaw ? "correct" : "incorrect";
-      return [
-        escapeCsvField(it.file.name),
-        predictedLabel,
-        classified.probability_ai.toFixed(4),
-        groundTruthLabel,
-        match,
-      ].join(",");
+      rows.push(
+        [
+          escapeCsvField(it.file.name),
+          escapeCsvField(wid),
+          predictedLabel,
+          classified.probability_ai.toFixed(4),
+          groundTruthLabel,
+          match,
+        ].join(",")
+      );
     });
+  });
+
   return [header.join(","), ...rows].join("\r\n");
 }
 
@@ -390,7 +486,7 @@ function downloadResultsCsv(items: BatchItem[], labelMap: Map<string, number>, t
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `ket_qua_threshold_${Math.round(threshold * 100)}.csv`;
+  a.download = `ket_qua_tat_ca_weight_threshold_${Math.round(threshold * 100)}.csv`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -579,15 +675,73 @@ function MetricBox({ label, value, theme }: { label: string; value: string; them
   );
 }
 
-// Thẻ video dạng lưới cho tab xử lý hàng loạt. Viền màu phản ánh:
+// Thanh TAB chọn xem kết quả theo weight nào — dùng chung cho cả tab Video
+// đơn và tab Xử lý hàng loạt. Bấm 1 weight sẽ đổi `activeWeightId` (state ở
+// component cha), làm toàn bộ phần hiển thị kết quả bên dưới (ResultSummary,
+// biểu đồ, viền màu lưới video, bảng chỉ số...) đổi theo NGAY, không cần
+// chạy lại pipeline vì kết quả của mọi weight đã chọn đều được lưu sẵn.
+function WeightResultTabs({
+  weights,
+  resultsByWeight,
+  activeWeightId,
+  onSelect,
+  theme,
+}: {
+  weights: WeightInfo[];
+  resultsByWeight: Record<string, WeightResult>;
+  activeWeightId: string | null;
+  onSelect: (id: string) => void;
+  theme: Theme;
+}) {
+  const knownIds = weights.map((w) => w.id);
+  // Weight đã có kết quả nhưng không còn trong danh sách khả dụng nữa (vd bị
+  // xoá khỏi Drive sau khi chạy) vẫn hiện tab, xếp ở cuối, để không mất kết
+  // quả cũ đã chạy được.
+  const extraIds = Object.keys(resultsByWeight).filter((id) => !knownIds.includes(id));
+  const orderedIds = [...knownIds.filter((id) => resultsByWeight[id]), ...extraIds];
+
+  if (orderedIds.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 mb-4 font-sans">
+      {orderedIds.map((id) => {
+        const info = weights.find((w) => w.id === id);
+        const entry = resultsByWeight[id];
+        const hasError = !!entry?.error;
+        const isActive = activeWeightId === id;
+        return (
+          <button
+            key={id}
+            onClick={() => onSelect(id)}
+            className={`text-xs px-3 py-1.5 rounded-lg border flex items-center gap-1.5 transition-all ${
+              isActive
+                ? `${theme.bgMain} border-[#268bd2] ${theme.textHeading} font-bold`
+                : `${theme.bgCard} ${theme.border} ${theme.textSub} hover:opacity-80`
+            }`}
+            title={info?.name ?? id}
+          >
+            {hasError && <span className="w-1.5 h-1.5 rounded-full bg-[#dc322f] shrink-0" />}
+            <span className="truncate max-w-[160px]">{info?.name ?? id}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// Thẻ video dạng lưới cho tab xử lý hàng loạt. Viền màu phản ánh kết quả
+// của weight đang được XEM (activeWeightId) — không phải toàn bộ weight đã
+// chạy — vì mỗi weight có thể cho ra kết quả khác nhau:
 // - chưa chạy / đang chạy: màu trung tính hoặc xanh dương nhấp nháy
-// - đã chạy NHƯNG không có nhãn CSV để đối chiếu: theo màu nhãn dự đoán (cam = AI, lam = Real)
-// - đã chạy VÀ có nhãn CSV: xanh lá = dự đoán khớp nhãn thật, đỏ = dự đoán sai nhãn thật
-// Nhãn dự đoán luôn tính lại theo `threshold` hiện tại, không dùng "label" gốc từ backend.
+// - đã chạy nhưng KHÔNG có kết quả cho weight đang xem (lỗi hoặc weight đó
+//   không nằm trong lần chạy): màu trung tính
+// - có kết quả NHƯNG không có nhãn CSV để đối chiếu: theo màu nhãn dự đoán (cam = AI, lam = Real)
+// - có kết quả VÀ có nhãn CSV: xanh lá = dự đoán khớp nhãn thật, đỏ = dự đoán sai nhãn thật
 function BatchGridCard({
   item,
   groundTruth,
   threshold,
+  activeWeightId,
   isSelected,
   onSelect,
   onRemove,
@@ -596,21 +750,26 @@ function BatchGridCard({
   item: BatchItem;
   groundTruth: number | undefined;
   threshold: number;
+  activeWeightId: string | null;
   isSelected: boolean;
   onSelect: () => void;
   onRemove: () => void;
   disableRemove: boolean;
 }) {
-  const classified = item.status === "done" && item.result ? classifyWithThreshold(item.result, threshold) : null;
+  const activeEntry =
+    item.status === "done" && activeWeightId ? item.resultsByWeight?.[activeWeightId] : undefined;
+  const classified = activeEntry && !activeEntry.error ? classifyWithThreshold(activeEntry.result, threshold) : null;
   const predicted = classified ? (classified.isSynthetic ? 1 : 0) : undefined;
   const hasGroundTruth = groundTruth !== undefined;
   const isCorrect = hasGroundTruth && predicted !== undefined ? predicted === groundTruth : undefined;
+  const missingForActiveWeight = item.status === "done" && !classified;
 
   let borderColor = "#0a4a58"; // mặc định (queued)
   if (item.status === "processing") borderColor = "#268bd2";
   else if (item.status === "error") borderColor = "#dc322f";
   else if (item.status === "done") {
-    if (isCorrect === true) borderColor = "#859900"; // đúng nhãn CSV -> xanh lá
+    if (!classified) borderColor = "#586e75"; // chưa có kết quả cho weight đang xem
+    else if (isCorrect === true) borderColor = "#859900"; // đúng nhãn CSV -> xanh lá
     else if (isCorrect === false) borderColor = "#dc322f"; // sai nhãn CSV -> đỏ
     else borderColor = predicted === 1 ? "#b58900" : "#268bd2"; // không có nhãn để so -> theo màu dự đoán
   }
@@ -660,7 +819,7 @@ function BatchGridCard({
         </div>
       )}
 
-      {/* Thanh dưới: nhãn dự đoán + đối chiếu CSV (nếu có) */}
+      {/* Thanh dưới: nhãn dự đoán (theo weight đang xem) + đối chiếu CSV (nếu có) */}
       {item.status === "done" && classified && (
         <div className="absolute bottom-0 inset-x-0 px-2 py-1 bg-black/75 flex items-center justify-between font-sans">
           <span className={`text-[10px] font-bold ${classified.isSynthetic ? "text-[#dc322f]" : "text-[#859900]"}`}>
@@ -672,6 +831,11 @@ function BatchGridCard({
             ) : (
               <X className="w-3.5 h-3.5 text-[#dc322f]" />
             ))}
+        </div>
+      )}
+      {missingForActiveWeight && (
+        <div className="absolute bottom-0 inset-x-0 px-2 py-1 bg-black/75 font-sans">
+          <span className="text-[10px] text-[#93a1a1]">Chưa có KQ cho weight này</span>
         </div>
       )}
     </div>
@@ -691,11 +855,21 @@ export default function SyntheticVideoDetector() {
   // khi chưa truy cập được backend (Colab/Ngrok).
   const [mockMode, setMockMode] = useState(false);
 
+  // --- Danh sách weight (Google Drive) + lựa chọn của người dùng ---
+  // `availableWeights`: toàn bộ weight backend báo là đang có trên Drive.
+  // `selectedWeightIds`: các weight được TICK để CHẠY (checkbox).
+  // `activeWeightId`: weight đang được XEM kết quả (tab) — dùng chung cho
+  // cả 2 tab Video đơn / Xử lý hàng loạt như yêu cầu.
+  const [availableWeights, setAvailableWeights] = useState<WeightInfo[]>([]);
+  const [selectedWeightIds, setSelectedWeightIds] = useState<string[]>([]);
+  const [activeWeightId, setActiveWeightId] = useState<string | null>(null);
+  const [weightsError, setWeightsError] = useState<string | null>(null);
+  const hasAutoSelectedRef = useRef(false);
+
   // --- Single video tab state ---
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [result, setResult] = useState<AnalysisResult | null>(null);
-  const [scoreData, setScoreData] = useState<ScorePoint[]>([]);
+  const [singleResultsByWeight, setSingleResultsByWeight] = useState<Record<string, WeightResult>>({});
   const [currentTime, setCurrentTime] = useState(0);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -711,6 +885,42 @@ export default function SyntheticVideoDetector() {
   // Nhãn thật (ground truth) lấy từ file CSV: tên file -> 0 (Real) | 1 (AI)
   const [labelMap, setLabelMap] = useState<Map<string, number>>(new Map());
   const [csvInfo, setCsvInfo] = useState<{ fileName: string; totalRows: number } | null>(null);
+
+  // Lấy danh sách weight từ backend, poll định kỳ mỗi WEIGHTS_POLL_INTERVAL_MS
+  // — đây là cơ chế khiến weight mới thêm/ghi đè trên Google Drive tự xuất
+  // hiện/tự cập nhật trên UI mà không cần thao tác gì thêm.
+  const loadWeights = useCallback(async () => {
+    try {
+      const list = mockMode ? generateMockWeightsList() : await fetchAvailableWeights();
+      setAvailableWeights(list);
+      setWeightsError(null);
+    } catch (e: any) {
+      setWeightsError("Không lấy được danh sách weight từ backend. Kiểm tra lại URL Ngrok / Colab có đang chạy không.");
+    }
+  }, [mockMode]);
+
+  useEffect(() => {
+    loadWeights();
+    const interval = setInterval(loadWeights, WEIGHTS_POLL_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [loadWeights]);
+
+  // Lần đầu có danh sách weight -> tự tick chọn hết (để chạy được ngay).
+  // Weight bị xoá khỏi Drive thì tự bỏ khỏi danh sách đã tick; weight MỚI
+  // xuất hiện sau lần đầu KHÔNG tự tick (tránh tự ý chạy thêm model ngoài ý
+  // muốn người dùng) — người dùng tick tay nếu muốn dùng weight mới đó.
+  useEffect(() => {
+    const availableIds = new Set(availableWeights.map((w) => w.id));
+    setSelectedWeightIds((prev) => prev.filter((id) => availableIds.has(id)));
+    if (!hasAutoSelectedRef.current && availableWeights.length > 0) {
+      setSelectedWeightIds(availableWeights.filter((w) => w.ready).map((w) => w.id));
+      hasAutoSelectedRef.current = true;
+    }
+  }, [availableWeights]);
+
+  const toggleWeightSelected = (id: string) => {
+    setSelectedWeightIds((prev) => (prev.includes(id) ? prev.filter((w) => w !== id) : [...prev, id]));
+  };
 
   // Tạo object URL đúng MỘT LẦN cho mỗi file, thay vì gọi
   // URL.createObjectURL() ngay trong JSX — gọi trong JSX tạo ra một blob URL
@@ -760,23 +970,23 @@ export default function SyntheticVideoDetector() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       setSelectedFile(e.target.files[0]);
-      setResult(null);
+      setSingleResultsByWeight({});
     }
   };
 
   const handleAnalyze = async () => {
-    if (!selectedFile) return;
+    if (!selectedFile || selectedWeightIds.length === 0) return;
     setIsAnalyzing(true);
-    setResult(null);
-    setScoreData([]);
+    setSingleResultsByWeight({});
     setCurrentTime(0);
 
     try {
-      const { result: r, scores } = mockMode
-        ? await generateMockResult(selectedFile)
-        : await analyzeVideoFile(selectedFile);
-      setResult(r);
-      setScoreData(scores);
+      const resultsMap = mockMode
+        ? await generateMockResultsForWeights(selectedFile, selectedWeightIds)
+        : await analyzeVideoFile(selectedFile, selectedWeightIds);
+      setSingleResultsByWeight(resultsMap);
+      const firstOk = selectedWeightIds.find((id) => resultsMap[id] && !resultsMap[id].error) ?? selectedWeightIds[0];
+      setActiveWeightId(firstOk ?? null);
     } catch (error) {
       console.error("API Upload Error:", error);
       alert("Không thể kết nối tới model AI qua Ngrok. Vui lòng kiểm tra lại URL!");
@@ -854,19 +1064,20 @@ export default function SyntheticVideoDetector() {
     setSelectedBatchId(null);
   };
 
-  // Xử lý 1 video, cập nhật đúng phần tử tương ứng trong danh sách.
-  // labelMap được truyền vào để chế độ mock "lái" điểm giả theo nhãn CSV
-  // thật (nếu có) cho ra kết quả giống một model thật hơn là random thuần.
-  const processOneBatchItem = async (id: string, file: File) => {
+  // Xử lý 1 video với TẤT CẢ weight đã chọn CÙNG LÚC (1 request), cập nhật
+  // đúng phần tử tương ứng trong danh sách. labelMap được truyền vào để chế
+  // độ mock "lái" điểm giả theo nhãn CSV thật (nếu có) cho ra kết quả giống
+  // một model thật hơn là random thuần.
+  const processOneBatchItem = async (id: string, file: File, weightIds: string[]) => {
     setBatchItems((prev) => prev.map((it) => (it.id === id ? { ...it, status: "processing", error: undefined } : it)));
     setSelectedBatchId(id);
 
     try {
-      const { result: r, scores } = mockMode
-        ? await generateMockResult(file, labelMap.get(file.name))
-        : await analyzeVideoFile(file);
+      const resultsMap = mockMode
+        ? await generateMockResultsForWeights(file, weightIds, labelMap.get(file.name))
+        : await analyzeVideoFile(file, weightIds);
       setBatchItems((prev) =>
-        prev.map((it) => (it.id === id ? { ...it, status: "done", result: r, scores } : it))
+        prev.map((it) => (it.id === id ? { ...it, status: "done", resultsByWeight: resultsMap } : it))
       );
     } catch (err: any) {
       console.error("Batch upload error:", err);
@@ -879,16 +1090,17 @@ export default function SyntheticVideoDetector() {
   };
 
   // Chạy lần lượt từng video một (không chạy song song) — video đứng trước
-  // xử lý xong mới tới video tiếp theo, giống yêu cầu "chạy lần lượt".
+  // xử lý xong mới tới video tiếp theo. Với MỖI video, tất cả weight đã tick
+  // được chạy CÙNG LÚC trong 1 request duy nhất.
   const runAllBatch = async () => {
-    if (isBatchRunning) return;
+    if (isBatchRunning || selectedWeightIds.length === 0) return;
     const queue = batchItems.filter((it) => it.status === "queued" || it.status === "error");
     if (queue.length === 0) return;
 
     setIsBatchRunning(true);
     for (const item of queue) {
       // eslint-disable-next-line no-await-in-loop
-      await processOneBatchItem(item.id, item.file);
+      await processOneBatchItem(item.id, item.file, selectedWeightIds);
     }
     setIsBatchRunning(false);
   };
@@ -913,7 +1125,20 @@ export default function SyntheticVideoDetector() {
     () => batchItems.filter((it) => labelMap.has(it.file.name)).length,
     [batchItems, labelMap]
   );
-  const metrics = useMemo(() => computeMetrics(batchItems, labelMap, threshold), [batchItems, labelMap, threshold]);
+  const metrics = useMemo(
+    () => computeMetrics(batchItems, labelMap, threshold, activeWeightId),
+    [batchItems, labelMap, threshold, activeWeightId]
+  );
+  const activeWeightName = availableWeights.find((w) => w.id === activeWeightId)?.name ?? activeWeightId ?? "";
+
+  // Kết quả của weight đang xem, cho video đơn hiện tại
+  const activeSingleEntry = activeWeightId ? singleResultsByWeight[activeWeightId] : undefined;
+  const singleResult = activeSingleEntry && !activeSingleEntry.error ? activeSingleEntry.result : null;
+  const singleScores = activeSingleEntry?.scores ?? [];
+
+  // Kết quả của weight đang xem, cho video đang chọn trong tab hàng loạt
+  const activeBatchEntry =
+    selectedBatchItem && activeWeightId ? selectedBatchItem.resultsByWeight?.[activeWeightId] : undefined;
 
   return (
     <div
@@ -962,7 +1187,8 @@ export default function SyntheticVideoDetector() {
         </div>
 
         {/* Bảng chỉ số đánh giá — đặt TRÊN thanh threshold để kéo thử ngưỡng
-            là thấy ngay số liệu đổi theo, không cần cuộn xuống lưới video. */}
+            là thấy ngay số liệu đổi theo, không cần cuộn xuống lưới video.
+            Luôn tính theo weight đang được XEM (tab hiện tại). */}
         {metrics && (
           <div className={`${theme.bgCard} border ${theme.border} rounded-lg p-6 mb-6 transition-colors duration-300`}>
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -971,13 +1197,13 @@ export default function SyntheticVideoDetector() {
               </h2>
               <div className="flex items-center gap-3 font-sans">
                 <span className={`text-xs ${theme.textSub}`}>
-                  Tính trên {metrics.n} video có nhãn CSV khớp tên file · threshold {(threshold * 100).toFixed(0)}%
+                  Weight: <span className={`font-bold ${theme.textHeading}`}>{activeWeightName}</span> · {metrics.n} video có nhãn CSV khớp tên file · threshold {(threshold * 100).toFixed(0)}%
                 </span>
                 <button
                   onClick={() => downloadResultsCsv(batchItems, labelMap, threshold)}
                   className={`text-xs px-3 py-1.5 rounded-lg border ${theme.border} ${theme.btnCancel} flex items-center gap-1.5 transition-colors shrink-0`}
                 >
-                  <Download className="w-3.5 h-3.5" /> Xuất CSV kết quả
+                  <Download className="w-3.5 h-3.5" /> Xuất CSV (tất cả weight)
                 </button>
               </div>
             </div>
@@ -1034,7 +1260,10 @@ export default function SyntheticVideoDetector() {
             <input
               type="checkbox"
               checked={mockMode}
-              onChange={(e) => setMockMode(e.target.checked)}
+              onChange={(e) => {
+                setMockMode(e.target.checked);
+                hasAutoSelectedRef.current = false; // đổi nguồn dữ liệu weight -> cho tự tick lại từ đầu
+              }}
               className="accent-[#b58900] mt-0.5"
             />
             <span>
@@ -1046,6 +1275,69 @@ export default function SyntheticVideoDetector() {
               </span>
             </span>
           </label>
+        </div>
+
+        {/* Bảng chọn WEIGHT để chạy — danh sách này tự đồng bộ với Google
+            Drive (poll backend mỗi vài giây), nên weight mới thêm/ghi đè
+            trên Drive tự xuất hiện ở đây. Tick nhiều weight rồi bấm "Chạy"
+            (ở tab Video đơn / Xử lý hàng loạt) sẽ chạy TẤT CẢ weight đã tick
+            cùng lúc cho video đó. */}
+        <div className={`${theme.bgCard} border ${theme.border} rounded-lg p-4 mb-6 font-sans transition-colors duration-300`}>
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+            <h2 className={`text-sm font-normal ${theme.textHeading} uppercase tracking-wider flex items-center gap-2 transition-colors`}>
+              <Database className="w-4 h-4 text-[#6c71c4]" /> Weight (Google Drive)
+            </h2>
+            <div className="flex items-center gap-3">
+              <span className={`text-[11px] ${theme.textSub}`}>
+                Đã chọn {selectedWeightIds.length}/{availableWeights.length} · tự làm mới mỗi {WEIGHTS_POLL_INTERVAL_MS / 1000}s
+              </span>
+              <button
+                onClick={loadWeights}
+                className={`text-xs px-3 py-1.5 rounded-lg border ${theme.border} ${theme.btnCancel} flex items-center gap-1.5 transition-colors`}
+              >
+                <RefreshCw className="w-3.5 h-3.5" /> Làm mới
+              </button>
+            </div>
+          </div>
+
+          {weightsError && (
+            <p className="text-[11px] text-[#dc322f] flex items-center gap-1.5 mb-2">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> {weightsError}
+            </p>
+          )}
+
+          {availableWeights.length === 0 && !weightsError ? (
+            <p className={`text-xs ${theme.textSub}`}>
+              Chưa tìm thấy weight nào. Kiểm tra lại thư mục WEIGHTS_ROOT trên Google Drive (mỗi weight là 1 thư mục con chứa best_model.pt + scaler.joblib).
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {availableWeights.map((w) => (
+                <label
+                  key={w.id}
+                  className={`flex items-start gap-2 px-3 py-2 rounded-lg border ${theme.border} ${theme.inputBg} cursor-pointer transition-colors ${!w.ready ? "opacity-50" : ""}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedWeightIds.includes(w.id)}
+                    onChange={() => toggleWeightSelected(w.id)}
+                    disabled={!w.ready}
+                    className="accent-[#859900] mt-0.5 shrink-0"
+                  />
+                  <span className="min-w-0">
+                    <span className={`text-xs font-medium block truncate ${theme.textHeading}`}>{w.name}</span>
+                    <span className={`text-[10px] block ${theme.textSub}`}>
+                      Cập nhật lúc {formatWeightTime(w.updated_at)}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+
+          {selectedWeightIds.length === 0 && availableWeights.length > 0 && (
+            <p className="text-[11px] text-[#b58900] mt-2">Chọn ít nhất 1 weight để chạy.</p>
+          )}
         </div>
 
         {/* Tabs */}
@@ -1103,7 +1395,7 @@ export default function SyntheticVideoDetector() {
                       <div className="flex gap-3 font-sans">
                         <button
                           onClick={handleAnalyze}
-                          disabled={isAnalyzing}
+                          disabled={isAnalyzing || selectedWeightIds.length === 0}
                           className="flex-1 bg-[#859900] hover:brightness-110 text-[#002b36] font-bold py-3 px-6 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50"
                         >
                           {isAnalyzing ? (
@@ -1112,7 +1404,7 @@ export default function SyntheticVideoDetector() {
                             </>
                           ) : (
                             <>
-                              <Cpu className="w-5 h-5" /> Chạy pipeline AI xử lí
+                              <Cpu className="w-5 h-5" /> Chạy pipeline AI xử lí ({selectedWeightIds.length} weight)
                             </>
                           )}
                         </button>
@@ -1120,7 +1412,7 @@ export default function SyntheticVideoDetector() {
                         <button
                           onClick={() => {
                             setSelectedFile(null);
-                            setResult(null);
+                            setSingleResultsByWeight({});
                           }}
                           className={`px-4 py-3 border ${theme.border} ${theme.btnCancel} rounded-lg text-sm font-medium transition-colors`}
                         >
@@ -1140,7 +1432,17 @@ export default function SyntheticVideoDetector() {
                       <BarChart2 className="w-4 h-4 text-[#268bd2]" /> Analysis Results
                     </h2>
 
-                    {!result && !isAnalyzing && (
+                    {Object.keys(singleResultsByWeight).length > 0 && (
+                      <WeightResultTabs
+                        weights={availableWeights}
+                        resultsByWeight={singleResultsByWeight}
+                        activeWeightId={activeWeightId}
+                        onSelect={setActiveWeightId}
+                        theme={theme}
+                      />
+                    )}
+
+                    {Object.keys(singleResultsByWeight).length === 0 && !isAnalyzing && (
                       <div className={`text-center py-16 ${theme.textMain}`}>
                         <Cpu className="w-12 h-12 mx-auto mb-3 opacity-40" />
                         <p className="text-sm font-sans">No data available. Please upload a video and run the model.</p>
@@ -1160,14 +1462,21 @@ export default function SyntheticVideoDetector() {
                       </div>
                     )}
 
-                    {result && !isAnalyzing && <ResultSummary result={result} theme={theme} threshold={threshold} />}
+                    {!isAnalyzing && activeSingleEntry?.error && (
+                      <div className="text-center py-16 text-[#dc322f]">
+                        <X className="w-12 h-12 mx-auto mb-3 opacity-60" />
+                        <p className="text-sm font-sans">Lỗi với weight này: {activeSingleEntry.error}</p>
+                      </div>
+                    )}
+
+                    {!isAnalyzing && singleResult && <ResultSummary result={singleResult} theme={theme} threshold={threshold} />}
                   </div>
                 </div>
               </div>
             </div>
 
             {/* Real-time Score Chart */}
-            {scoreData.length > 0 && (
+            {singleScores.length > 0 && !activeSingleEntry?.error && (
               <div className={`${theme.bgCard} border ${theme.border} p-6 mt-8 transition-colors duration-300`}>
                 <p className={`text-sm ${theme.textSub} mb-4 font-sans transition-colors`}>
                   Play the video to view real-time data below.
@@ -1179,7 +1488,7 @@ export default function SyntheticVideoDetector() {
                   Bấm vào biểu đồ để tua video tới đúng thời điểm đó.
                 </p>
                 <ScoreChart
-                  data={scoreData}
+                  data={singleScores}
                   currentTime={currentTime}
                   onSeek={handleSeek}
                   isDarkMode={isDarkMode}
@@ -1219,7 +1528,7 @@ export default function SyntheticVideoDetector() {
                   </label>
                   <button
                     onClick={runAllBatch}
-                    disabled={isBatchRunning || pendingCount === 0}
+                    disabled={isBatchRunning || pendingCount === 0 || selectedWeightIds.length === 0}
                     className="text-xs font-bold px-4 py-2 rounded-lg bg-[#859900] hover:brightness-110 text-[#002b36] flex items-center gap-2 transition-all disabled:opacity-50"
                   >
                     {isBatchRunning ? (
@@ -1228,7 +1537,7 @@ export default function SyntheticVideoDetector() {
                       </>
                     ) : (
                       <>
-                        <Cpu className="w-3.5 h-3.5" /> Chạy tất cả ({pendingCount})
+                        <Cpu className="w-3.5 h-3.5" /> Chạy tất cả ({pendingCount}) · {selectedWeightIds.length} weight
                       </>
                     )}
                   </button>
@@ -1273,7 +1582,7 @@ export default function SyntheticVideoDetector() {
                     Kéo thả nhiều video vào đây hoặc <span className="text-[#268bd2]">chọn nhiều file</span>
                   </p>
                   <p className={`text-xs ${theme.textMain} font-sans transition-colors`}>
-                    Sau khi tải lên, bấm "Chạy tất cả" để xử lý lần lượt từng video
+                    Sau khi tải lên, bấm "Chạy tất cả" để xử lý lần lượt từng video (mỗi video chạy hết các weight đã chọn cùng lúc)
                   </p>
                   <input type="file" accept="video/*" multiple className="hidden" onChange={handleBatchFilesSelected} />
                 </label>
@@ -1285,6 +1594,7 @@ export default function SyntheticVideoDetector() {
                       item={item}
                       groundTruth={labelMap.get(item.file.name)}
                       threshold={threshold}
+                      activeWeightId={activeWeightId}
                       isSelected={selectedBatchId === item.id}
                       onSelect={() => setSelectedBatchId(item.id)}
                       onRemove={() => removeBatchItem(item.id)}
@@ -1330,6 +1640,16 @@ export default function SyntheticVideoDetector() {
                       <BarChart2 className="w-4 h-4 text-[#268bd2]" /> Analysis Results
                     </h2>
 
+                    {selectedBatchItem.status === "done" && selectedBatchItem.resultsByWeight && (
+                      <WeightResultTabs
+                        weights={availableWeights}
+                        resultsByWeight={selectedBatchItem.resultsByWeight}
+                        activeWeightId={activeWeightId}
+                        onSelect={setActiveWeightId}
+                        theme={theme}
+                      />
+                    )}
+
                     {selectedBatchItem.status === "queued" && (
                       <div className={`text-center py-16 ${theme.textMain}`}>
                         <Clock className="w-12 h-12 mx-auto mb-3 opacity-40" />
@@ -1357,8 +1677,27 @@ export default function SyntheticVideoDetector() {
                       </div>
                     )}
 
-                    {selectedBatchItem.status === "done" && selectedBatchItem.result && (
-                      <ResultSummary result={selectedBatchItem.result} theme={theme} threshold={threshold} />
+                    {selectedBatchItem.status === "done" && !activeWeightId && (
+                      <div className={`text-center py-16 ${theme.textMain}`}>
+                        <p className="text-sm font-sans">Chọn 1 tab weight ở trên để xem kết quả.</p>
+                      </div>
+                    )}
+
+                    {selectedBatchItem.status === "done" && activeWeightId && !activeBatchEntry && (
+                      <div className={`text-center py-16 ${theme.textMain}`}>
+                        <p className="text-sm font-sans">Video này chưa được chạy với weight đang xem.</p>
+                      </div>
+                    )}
+
+                    {selectedBatchItem.status === "done" && activeBatchEntry?.error && (
+                      <div className="text-center py-16 text-[#dc322f]">
+                        <X className="w-12 h-12 mx-auto mb-3 opacity-60" />
+                        <p className="text-sm font-sans">Lỗi với weight này: {activeBatchEntry.error}</p>
+                      </div>
+                    )}
+
+                    {selectedBatchItem.status === "done" && activeBatchEntry && !activeBatchEntry.error && (
+                      <ResultSummary result={activeBatchEntry.result} theme={theme} threshold={threshold} />
                     )}
                   </div>
                 </div>
@@ -1371,27 +1710,31 @@ export default function SyntheticVideoDetector() {
               )
             )}
 
-            {/* Biểu đồ của video đang chọn */}
-            {selectedBatchItem && selectedBatchItem.status === "done" && (selectedBatchItem.scores?.length ?? 0) > 0 && (
-              <div className={`${theme.bgCard} border ${theme.border} p-6 transition-colors duration-300`}>
-                <p className={`text-sm ${theme.textSub} mb-4 font-sans transition-colors`}>
-                  Play the video to view real-time data below.
-                </p>
-                <h2 className={`text-sm font-normal ${theme.textHeading} uppercase tracking-wider mb-4 flex items-center gap-2 font-sans transition-colors`}>
-                  <BarChart2 className="w-4 h-4 text-[#268bd2]" /> Video Analysis
-                </h2>
-                <p className={`text-xs ${theme.textMain} mb-2 font-sans transition-colors`}>
-                  Bấm vào biểu đồ để tua video tới đúng thời điểm đó.
-                </p>
-                <ScoreChart
-                  data={selectedBatchItem.scores as ScorePoint[]}
-                  currentTime={batchCurrentTime}
-                  onSeek={handleBatchSeek}
-                  isDarkMode={isDarkMode}
-                  threshold={threshold}
-                />
-              </div>
-            )}
+            {/* Biểu đồ của video đang chọn (theo weight đang xem) */}
+            {selectedBatchItem &&
+              selectedBatchItem.status === "done" &&
+              activeBatchEntry &&
+              !activeBatchEntry.error &&
+              (activeBatchEntry.scores?.length ?? 0) > 0 && (
+                <div className={`${theme.bgCard} border ${theme.border} p-6 transition-colors duration-300`}>
+                  <p className={`text-sm ${theme.textSub} mb-4 font-sans transition-colors`}>
+                    Play the video to view real-time data below.
+                  </p>
+                  <h2 className={`text-sm font-normal ${theme.textHeading} uppercase tracking-wider mb-4 flex items-center gap-2 font-sans transition-colors`}>
+                    <BarChart2 className="w-4 h-4 text-[#268bd2]" /> Video Analysis
+                  </h2>
+                  <p className={`text-xs ${theme.textMain} mb-2 font-sans transition-colors`}>
+                    Bấm vào biểu đồ để tua video tới đúng thời điểm đó.
+                  </p>
+                  <ScoreChart
+                    data={activeBatchEntry.scores}
+                    currentTime={batchCurrentTime}
+                    onSeek={handleBatchSeek}
+                    isDarkMode={isDarkMode}
+                    threshold={threshold}
+                  />
+                </div>
+              )}
           </div>
         )}
       </main>

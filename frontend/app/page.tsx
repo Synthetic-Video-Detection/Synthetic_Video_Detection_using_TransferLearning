@@ -24,6 +24,7 @@ import {
   Download,
   Database,
   AlertTriangle,
+  Link2,
 } from "lucide-react";
 import {
   LineChart,
@@ -71,15 +72,20 @@ type WeightInfo = {
 // weight khác trong cùng lần chạy vẫn có thể thành công bình thường.
 type WeightResult = { result: AnalysisResult; scores: ScorePoint[]; error?: string };
 
+// Nguồn video của 1 item trong batch: HOẶC file tải lên trực tiếp, HOẶC 1
+// URL trang web (YouTube/TikTok/Facebook/...) mà backend sẽ tự tải xuống
+// bằng yt-dlp trước khi chạy pipeline — không bao giờ có cả 2 cùng lúc.
 type BatchItem = {
   id: string;
-  file: File;
-  url: string;
+  name: string; // tên hiển thị + khoá khớp nhãn CSV — là file.name hoặc chính URL đã dán
+  file?: File; // chỉ có khi nguồn là file tải lên trực tiếp
+  sourceUrl?: string; // chỉ có khi nguồn là URL trang web
+  previewUrl?: string; // blob URL để xem trước trong trình duyệt — chỉ có khi có `file`
   status: BatchStatus;
   // Kết quả của video này, theo từng weight đã chọn khi chạy — 1 request
-  // /upload duy nhất trả về kết quả cho TẤT CẢ weight đã chọn cùng lúc
-  // (backend chỉ trích xuất đặc trưng CLIP+DINOv2 một lần rồi chấm điểm
-  // với từng weight, không chạy lại backbone cho mỗi weight).
+  // /upload (hoặc /upload_url) duy nhất trả về kết quả cho TẤT CẢ weight đã
+  // chọn cùng lúc (backend chỉ trích xuất đặc trưng CLIP+DINOv2 một lần rồi
+  // chấm điểm với từng weight, không chạy lại backbone cho mỗi weight).
   resultsByWeight?: Record<string, WeightResult>;
   error?: string; // lỗi của CẢ request (vd mất kết nối) — khác với lỗi riêng từng weight
 };
@@ -189,6 +195,56 @@ async function analyzeVideoFile(file: File, weightIds: string[]): Promise<Record
   return out;
 }
 
+// Giống analyzeVideoFile, nhưng nguồn video là 1 URL trang web (YouTube/
+// TikTok/Facebook/...) thay vì file tải lên — backend tự tải video xuống
+// bằng yt-dlp (endpoint /upload_url/) rồi chạy đúng pipeline y hệt /upload/.
+async function analyzeVideoUrl(url: string, weightIds: string[]): Promise<Record<string, WeightResult>> {
+  const formData = new FormData();
+  formData.append("url", url);
+  formData.append("weights", weightIds.join(","));
+
+  const response = await fetch(`${NGROK_BASE}/upload_url/`, {
+    method: "POST",
+    body: formData,
+    headers: {
+      "ngrok-skip-browser-warning": "true",
+    },
+  });
+
+  if (!response.ok) {
+    let message = `Server returned status: ${response.status}`;
+    try {
+      const errBody = await response.json();
+      if (errBody?.error) message = errBody.error;
+    } catch {
+      // Backend không trả JSON hợp lệ (vd: lỗi 502/504 từ Ngrok) -> giữ message mặc định
+    }
+    throw new Error(message);
+  }
+
+  const data = await response.json();
+  const rawResults: Record<string, any> = data.results ?? {};
+  const out: Record<string, WeightResult> = {};
+
+  for (const wid of weightIds) {
+    const r = rawResults[wid];
+    if (!r || r.error) {
+      out[wid] = {
+        result: { isSynthetic: false, confidence: 0, probability_ai: 0 },
+        scores: [],
+        error: r?.error ?? "Không có kết quả trả về cho weight này.",
+      };
+      continue;
+    }
+    out[wid] = {
+      result: { isSynthetic: r.label, confidence: r.confidence, probability_ai: r.probability_ai },
+      scores: Array.isArray(r.scores) ? r.scores.map((p: any) => ({ time: Number(p.time), score: Number(p.score) })) : [],
+    };
+  }
+
+  return out;
+}
+
 // --------------------------------------------------------------------- //
 // CHẾ ĐỘ TEST (MOCK) — sinh kết quả giả để kiểm tra toàn bộ giao diện
 // (lưới video, viền màu đúng/sai, chỉ số AUROC/Accuracy/..., thanh trượt
@@ -228,11 +284,13 @@ function generateMockWeightsList(): WeightInfo[] {
 // groundTruth (nếu biết từ CSV) chỉ dùng để "lái" điểm giả cho GIỐNG một
 // model hoạt động khá tốt (~80% đúng) thay vì random 50/50 vô nghĩa —
 // hoàn toàn không đọc/không cần backend thật.
-function generateMockResult(file: File, weightId: string, groundTruth?: number): Promise<WeightResult> {
+// `key` là định danh dùng để seed PRNG — file.name khi nguồn là file tải
+// lên, hoặc chính URL đã dán khi nguồn là link trang web.
+function generateMockResult(key: string, weightId: string, groundTruth?: number): Promise<WeightResult> {
   return new Promise((resolve) => {
     const delay = 350 + Math.random() * 900; // mô phỏng độ trễ mạng/inference cho giống thật
     setTimeout(() => {
-      const rng = mulberry32(stringSeed(`${file.name}::${weightId}`));
+      const rng = mulberry32(stringSeed(`${key}::${weightId}`));
 
       let base: number;
       if (groundTruth === 1) base = 0.55 + rng() * 0.4; // thiên về AI nhưng có nhiễu
@@ -266,12 +324,12 @@ function generateMockResult(file: File, weightId: string, groundTruth?: number):
 }
 
 async function generateMockResultsForWeights(
-  file: File,
+  key: string,
   weightIds: string[],
   groundTruth?: number
 ): Promise<Record<string, WeightResult>> {
   const entries = await Promise.all(
-    weightIds.map(async (wid) => [wid, await generateMockResult(file, wid, groundTruth)] as const)
+    weightIds.map(async (wid) => [wid, await generateMockResult(key, wid, groundTruth)] as const)
   );
   return Object.fromEntries(entries);
 }
@@ -379,9 +437,9 @@ function computeMetrics(
   if (!weightId) return null;
 
   const evaluable = items
-    .filter((it) => it.status === "done" && it.resultsByWeight?.[weightId] && !it.resultsByWeight[weightId].error && labelMap.has(it.file.name))
+    .filter((it) => it.status === "done" && it.resultsByWeight?.[weightId] && !it.resultsByWeight[weightId].error && labelMap.has(it.name))
     .map((it) => {
-      const truth = labelMap.get(it.file.name) as number;
+      const truth = labelMap.get(it.name) as number;
       const classified = classifyWithThreshold(it.resultsByWeight![weightId].result, threshold);
       const pred = classified.isSynthetic ? 1 : 0;
       const score = classified.probability_ai;
@@ -459,13 +517,13 @@ function buildResultsCsv(items: BatchItem[], labelMap: Map<string, number>, thre
       if (entry.error) return;
       const classified = classifyWithThreshold(entry.result, threshold);
       const predictedLabel = classified.isSynthetic ? "AI" : "Real";
-      const groundTruthRaw = labelMap.get(it.file.name);
+      const groundTruthRaw = labelMap.get(it.name);
       const groundTruthLabel = groundTruthRaw === undefined ? "" : groundTruthRaw === 1 ? "AI" : "Real";
       const match =
         groundTruthRaw === undefined ? "" : (classified.isSynthetic ? 1 : 0) === groundTruthRaw ? "correct" : "incorrect";
       rows.push(
         [
-          escapeCsvField(it.file.name),
+          escapeCsvField(it.name),
           escapeCsvField(wid),
           predictedLabel,
           classified.probability_ai.toFixed(4),
@@ -784,13 +842,17 @@ function BatchGridCard({
       }}
       onClick={onSelect}
     >
-      <div className="aspect-video w-full bg-black">
-        <video src={item.url} muted preload="metadata" className="w-full h-full object-cover pointer-events-none" />
+      <div className="aspect-video w-full bg-black flex items-center justify-center">
+        {item.previewUrl ? (
+          <video src={item.previewUrl} muted preload="metadata" className="w-full h-full object-cover pointer-events-none" />
+        ) : (
+          <Link2 className="w-6 h-6 text-white/40" />
+        )}
       </div>
 
-      {/* Thanh trên: tên file + nút xóa */}
+      {/* Thanh trên: tên file/URL + nút xóa */}
       <div className="absolute top-0 inset-x-0 px-2 py-1 bg-gradient-to-b from-black/80 to-transparent flex items-center justify-between gap-1 font-sans">
-        <span className="text-[10px] text-white/90 truncate">{item.file.name}</span>
+        <span className="text-[10px] text-white/90 truncate">{item.name}</span>
         <span
           onClick={(e) => {
             e.stopPropagation();
@@ -842,8 +904,509 @@ function BatchGridCard({
   );
 }
 
+// ============================================================================
+// DASHBOARD DOANH NGHIỆP — giao diện thứ 2, dày thông tin hơn, hướng tới vận
+// hành thực tế: threshold cố định trên cùng, hàng KPI, toolbar gọn, bảng dữ
+// liệu là trung tâm (lọc/tìm được), bấm 1 dòng mở panel chi tiết bên phải
+// (video/link + ResultSummary + biểu đồ điểm theo thời gian). Không có state
+// riêng ngoài bộ lọc/tìm kiếm — mọi thứ khác dùng chung với giao diện chuẩn.
+// ============================================================================
+function DashboardView({
+  theme,
+  isDarkMode,
+  mockMode,
+  setMockMode,
+  threshold,
+  setThreshold,
+  availableWeights,
+  selectedWeightIds,
+  toggleWeightSelected,
+  activeWeightId,
+  setActiveWeightId,
+  weightsError,
+  loadWeights,
+  batchItems,
+  labelMap,
+  metrics,
+  isBatchRunning,
+  runAllBatch,
+  removeBatchItem,
+  handleBatchFilesSelected,
+  handleAddBatchUrls,
+  showBatchUrlBox,
+  setShowBatchUrlBox,
+  batchUrlText,
+  setBatchUrlText,
+  handleCsvFileSelected,
+  csvInfo,
+  downloadResultsCsv,
+  search,
+  setSearch,
+  statusFilter,
+  setStatusFilter,
+  labelFilter,
+  setLabelFilter,
+  selectedBatchId,
+  setSelectedBatchId,
+  selectedBatchItem,
+  activeBatchEntry,
+  batchVideoRef,
+  batchCurrentTime,
+  handleBatchTimeUpdate,
+  handleBatchSeek,
+}: {
+  theme: Theme;
+  isDarkMode: boolean;
+  mockMode: boolean;
+  setMockMode: (v: boolean) => void;
+  threshold: number;
+  setThreshold: (v: number) => void;
+  availableWeights: WeightInfo[];
+  selectedWeightIds: string[];
+  toggleWeightSelected: (id: string) => void;
+  activeWeightId: string | null;
+  setActiveWeightId: (id: string) => void;
+  weightsError: string | null;
+  loadWeights: () => void;
+  batchItems: BatchItem[];
+  labelMap: Map<string, number>;
+  metrics: ReturnType<typeof computeMetrics>;
+  isBatchRunning: boolean;
+  runAllBatch: () => void;
+  removeBatchItem: (id: string) => void;
+  handleBatchFilesSelected: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  handleAddBatchUrls: () => void;
+  showBatchUrlBox: boolean;
+  setShowBatchUrlBox: (v: boolean | ((prev: boolean) => boolean)) => void;
+  batchUrlText: string;
+  setBatchUrlText: (v: string) => void;
+  handleCsvFileSelected: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  csvInfo: { fileName: string; totalRows: number } | null;
+  downloadResultsCsv: (items: BatchItem[], labelMap: Map<string, number>, threshold: number) => void;
+  search: string;
+  setSearch: (v: string) => void;
+  statusFilter: "all" | BatchStatus;
+  setStatusFilter: (v: "all" | BatchStatus) => void;
+  labelFilter: "all" | "ai" | "real" | "mismatch";
+  setLabelFilter: (v: "all" | "ai" | "real" | "mismatch") => void;
+  selectedBatchId: string | null;
+  setSelectedBatchId: (id: string | null) => void;
+  selectedBatchItem: BatchItem | null;
+  activeBatchEntry: WeightResult | undefined;
+  batchVideoRef: React.RefObject<HTMLVideoElement>;
+  batchCurrentTime: number;
+  handleBatchTimeUpdate: () => void;
+  handleBatchSeek: (t: number) => void;
+}) {
+  const doneItems = batchItems.filter((it) => it.status === "done");
+  const aiCount = doneItems.filter((it) => {
+    const entry = activeWeightId ? it.resultsByWeight?.[activeWeightId] : undefined;
+    return entry && !entry.error && classifyWithThreshold(entry.result, threshold).isSynthetic;
+  }).length;
+  const queueCount = batchItems.filter((it) => it.status === "queued" || it.status === "processing").length;
+  const errorCount = batchItems.filter((it) => it.status === "error").length;
+
+  const filteredItems = batchItems.filter((it) => {
+    if (search.trim() && !it.name.toLowerCase().includes(search.trim().toLowerCase())) return false;
+    if (statusFilter !== "all" && it.status !== statusFilter) return false;
+    if (labelFilter !== "all") {
+      const entry = activeWeightId ? it.resultsByWeight?.[activeWeightId] : undefined;
+      if (!entry || entry.error) return false;
+      const classified = classifyWithThreshold(entry.result, threshold);
+      const truth = labelMap.get(it.name);
+      if (labelFilter === "ai" && !classified.isSynthetic) return false;
+      if (labelFilter === "real" && classified.isSynthetic) return false;
+      if (labelFilter === "mismatch" && (truth === undefined || (classified.isSynthetic ? 1 : 0) === truth)) return false;
+    }
+    return true;
+  });
+
+  const statusLabel: Record<BatchStatus, string> = { queued: "Chờ", processing: "Đang chạy", done: "Xong", error: "Lỗi" };
+  const statusStyle: Record<BatchStatus, string> = {
+    queued: "text-[#93a1a1] border-[#93a1a1]/40",
+    processing: "text-[#268bd2] border-[#268bd2]/40",
+    done: "text-[#859900] border-[#859900]/40",
+    error: "text-[#dc322f] border-[#dc322f]/40",
+  };
+
+  return (
+    <div className="relative">
+      <h1 className={`text-2xl font-normal italic ${theme.textHeading} mb-4 font-serif transition-colors`}>
+        Dashboard vận hành
+      </h1>
+
+      {/* Thanh điều khiển: threshold + mock mode — cố định trên cùng, áp dụng ngay */}
+      <div className={`${theme.bgCard} border ${theme.border} rounded-lg p-4 mb-4 flex flex-wrap items-center gap-6 font-sans transition-colors`}>
+        <div className="flex items-center gap-3 flex-1 min-w-[280px]">
+          <SlidersHorizontal className="w-4 h-4 text-[#268bd2] shrink-0" />
+          <div className="flex-1">
+            <div className="flex justify-between text-xs mb-1">
+              <span className={theme.textSub}>Ngưỡng phân loại (threshold)</span>
+              <span className={`font-bold ${theme.textHeading}`}>{(threshold * 100).toFixed(0)}%</span>
+            </div>
+            <input
+              type="range"
+              min={0.01}
+              max={0.99}
+              step={0.01}
+              value={threshold}
+              onChange={(e) => setThreshold(Number(e.target.value))}
+              className="w-full accent-[#859900] cursor-pointer"
+            />
+          </div>
+        </div>
+        <label className="flex items-center gap-2 cursor-pointer shrink-0 text-xs">
+          <input
+            type="checkbox"
+            checked={mockMode}
+            onChange={(e) => setMockMode(e.target.checked)}
+            className="accent-[#b58900]"
+          />
+          <span className={`font-bold flex items-center gap-1 ${mockMode ? "text-[#b58900]" : theme.textHeading}`}>
+            <FlaskConical className="w-3.5 h-3.5" /> Chế độ test
+          </span>
+        </label>
+      </div>
+
+      {/* Chọn weight để chạy + weight đang xem kết quả */}
+      <div className={`${theme.bgCard} border ${theme.border} rounded-lg p-4 mb-4 font-sans transition-colors`}>
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <span className={`text-xs uppercase tracking-wider ${theme.textSub} flex items-center gap-1.5`}>
+            <Database className="w-3.5 h-3.5 text-[#6c71c4]" /> Weight
+          </span>
+          <button onClick={loadWeights} className={`text-[11px] px-2 py-1 rounded-lg border ${theme.border} ${theme.btnCancel} flex items-center gap-1`}>
+            <RefreshCw className="w-3 h-3" /> Làm mới
+          </button>
+        </div>
+        {weightsError && <p className="text-[11px] text-[#dc322f] mb-2">{weightsError}</p>}
+        <div className="flex flex-wrap gap-2">
+          {availableWeights.map((w) => (
+            <label
+              key={w.id}
+              className={`text-xs px-2.5 py-1.5 rounded-lg border cursor-pointer flex items-center gap-1.5 transition-colors ${theme.border} ${
+                selectedWeightIds.includes(w.id) ? `${theme.bgMain} font-bold ${theme.textHeading}` : `${theme.inputBg} ${theme.textSub}`
+              } ${!w.ready ? "opacity-50" : ""}`}
+            >
+              <input
+                type="checkbox"
+                checked={selectedWeightIds.includes(w.id)}
+                onChange={() => toggleWeightSelected(w.id)}
+                disabled={!w.ready}
+                className="accent-[#859900]"
+              />
+              {w.name}
+            </label>
+          ))}
+        </div>
+        <WeightResultTabs
+          weights={availableWeights}
+          resultsByWeight={Object.fromEntries(
+            batchItems.flatMap((it) => (it.resultsByWeight ? Object.keys(it.resultsByWeight).map((k) => [k, it.resultsByWeight![k]]) : []))
+          )}
+          activeWeightId={activeWeightId}
+          onSelect={setActiveWeightId}
+          theme={theme}
+        />
+      </div>
+
+      {/* Hàng KPI — tổng hợp theo weight đang xem */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-4">
+        <MetricBox label="Tổng video" value={String(batchItems.length)} theme={theme} />
+        <MetricBox label="Gắn nhãn AI" value={doneItems.length ? `${Math.round((aiCount / doneItems.length) * 100)}%` : "—"} theme={theme} />
+        <MetricBox
+          label="Gắn nhãn Real"
+          value={doneItems.length ? `${Math.round(((doneItems.length - aiCount) / doneItems.length) * 100)}%` : "—"}
+          theme={theme}
+        />
+        <MetricBox label="Accuracy (CSV)" value={metrics && metrics.n > 0 ? `${(metrics.accuracy * 100).toFixed(1)}%` : "N/A"} theme={theme} />
+        <MetricBox label="Đang xử lý / lỗi" value={`${queueCount} / ${errorCount}`} theme={theme} />
+      </div>
+
+      {/* Toolbar: thêm video/URL, nhãn CSV, xuất CSV, chạy tất cả */}
+      <div className={`${theme.bgCard} border ${theme.border} rounded-lg p-3 mb-2 flex flex-wrap items-center gap-2 font-sans transition-colors`}>
+        <label className={`text-xs px-3 py-2 rounded-lg border ${theme.border} ${theme.btnCancel} cursor-pointer flex items-center gap-1.5`}>
+          <Upload className="w-3.5 h-3.5" /> Thêm video
+          <input type="file" accept="video/*" multiple className="hidden" onChange={handleBatchFilesSelected} />
+        </label>
+        <button
+          onClick={() => setShowBatchUrlBox((v) => !v)}
+          className={`text-xs px-3 py-2 rounded-lg border ${theme.border} ${theme.btnCancel} flex items-center gap-1.5`}
+        >
+          <Link2 className="w-3.5 h-3.5" /> Thêm từ URL
+        </button>
+        <label className={`text-xs px-3 py-2 rounded-lg border ${theme.border} ${theme.btnCancel} cursor-pointer flex items-center gap-1.5`}>
+          <FileSpreadsheet className="w-3.5 h-3.5" /> Nhãn CSV
+          <input type="file" accept=".csv,text/csv" className="hidden" onChange={handleCsvFileSelected} />
+        </label>
+        <button
+          onClick={() => downloadResultsCsv(batchItems, labelMap, threshold)}
+          className={`text-xs px-3 py-2 rounded-lg border ${theme.border} ${theme.btnCancel} flex items-center gap-1.5`}
+        >
+          <Download className="w-3.5 h-3.5" /> Xuất CSV
+        </button>
+        <button
+          onClick={runAllBatch}
+          disabled={isBatchRunning || selectedWeightIds.length === 0}
+          className="ml-auto text-xs font-bold px-4 py-2 rounded-lg bg-[#859900] hover:brightness-110 text-[#002b36] disabled:opacity-50 flex items-center gap-1.5"
+        >
+          {isBatchRunning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Cpu className="w-3.5 h-3.5" />}
+          Chạy tất cả
+        </button>
+        {csvInfo && (
+          <span className={`text-[11px] ${theme.textSub} w-full`}>
+            Nhãn: {csvInfo.fileName} · {csvInfo.totalRows} dòng
+          </span>
+        )}
+      </div>
+
+      {showBatchUrlBox && (
+        <div className={`mb-4 p-3 rounded-lg border ${theme.border} ${theme.bgMain} font-sans`}>
+          <textarea
+            value={batchUrlText}
+            onChange={(e) => setBatchUrlText(e.target.value)}
+            placeholder="Dán link YouTube / TikTok / Facebook..., mỗi dòng 1 link"
+            rows={3}
+            className={`w-full px-3 py-2 rounded-lg border ${theme.border} ${theme.inputBg} ${theme.textHeading} text-xs font-sans outline-none focus:border-[#859900] mb-2`}
+          />
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setShowBatchUrlBox(false)} className={`text-xs px-3 py-1.5 rounded-lg border ${theme.border} ${theme.btnCancel}`}>
+              Hủy
+            </button>
+            <button
+              onClick={handleAddBatchUrls}
+              disabled={!batchUrlText.trim()}
+              className="text-xs font-bold px-3 py-1.5 rounded-lg bg-[#859900] hover:brightness-110 text-[#002b36] disabled:opacity-50"
+            >
+              Thêm vào danh sách
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Bộ lọc + tìm kiếm bảng */}
+      <div className="flex flex-wrap items-center gap-2 mb-2 font-sans">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Tìm tên hoặc URL video..."
+          className={`flex-1 min-w-[200px] text-xs px-3 py-2 rounded-lg border ${theme.border} ${theme.inputBg} ${theme.textHeading} outline-none focus:border-[#859900]`}
+        />
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as any)}
+          className={`text-xs px-2 py-2 rounded-lg border ${theme.border} ${theme.inputBg} ${theme.textHeading}`}
+        >
+          <option value="all">Tất cả trạng thái</option>
+          <option value="queued">Chờ</option>
+          <option value="processing">Đang chạy</option>
+          <option value="done">Xong</option>
+          <option value="error">Lỗi</option>
+        </select>
+        <select
+          value={labelFilter}
+          onChange={(e) => setLabelFilter(e.target.value as any)}
+          className={`text-xs px-2 py-2 rounded-lg border ${theme.border} ${theme.inputBg} ${theme.textHeading}`}
+        >
+          <option value="all">Tất cả nhãn</option>
+          <option value="ai">Dự đoán AI</option>
+          <option value="real">Dự đoán Real</option>
+          <option value="mismatch">Sai so với CSV</option>
+        </select>
+      </div>
+
+      {/* Bảng dữ liệu — cuộn trong khung cố định, header dính */}
+      <div className={`${theme.bgCard} border ${theme.border} rounded-lg overflow-hidden font-sans transition-colors`}>
+        <div className="overflow-y-auto" style={{ maxHeight: 520 }}>
+          <table className="w-full text-xs">
+            <thead className={`sticky top-0 ${theme.bgMain} z-10`}>
+              <tr>
+                <th className={`text-left px-4 py-2 ${theme.textSub} font-normal`}>Video / URL</th>
+                <th className={`text-left px-2 py-2 ${theme.textSub} font-normal`}>Trạng thái</th>
+                <th className={`text-left px-2 py-2 ${theme.textSub} font-normal`}>Dự đoán</th>
+                <th className={`text-left px-2 py-2 ${theme.textSub} font-normal`}>Xác suất</th>
+                <th className={`text-left px-2 py-2 ${theme.textSub} font-normal`}>Nhãn thật</th>
+                <th className="px-4 py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredItems.length === 0 && (
+                <tr>
+                  <td colSpan={6} className={`px-4 py-8 text-center ${theme.textSub}`}>
+                    Chưa có video nào khớp bộ lọc. Thêm video hoặc URL ở thanh công cụ phía trên.
+                  </td>
+                </tr>
+              )}
+              {filteredItems.map((it) => {
+                const entry = activeWeightId ? it.resultsByWeight?.[activeWeightId] : undefined;
+                const classified = entry && !entry.error ? classifyWithThreshold(entry.result, threshold) : null;
+                const truth = labelMap.get(it.name);
+                const truthLabel = truth === undefined ? "—" : truth === 1 ? "AI" : "Real";
+                const isMismatch = classified && truth !== undefined && (classified.isSynthetic ? 1 : 0) !== truth;
+                return (
+                  <tr
+                    key={it.id}
+                    onClick={() => setSelectedBatchId(it.id)}
+                    className={`border-t ${theme.border} cursor-pointer hover:opacity-80 ${
+                      selectedBatchId === it.id ? `${theme.bgMain}` : ""
+                    }`}
+                  >
+                    <td className={`px-4 py-2 max-w-[280px] ${theme.textHeading} flex items-center gap-2`}>
+                      <div className={`w-11 h-7 rounded shrink-0 overflow-hidden ${theme.bgMain} flex items-center justify-center`}>
+                        {it.previewUrl ? (
+                          <video src={it.previewUrl} muted preload="metadata" className="w-full h-full object-cover pointer-events-none" />
+                        ) : it.sourceUrl ? (
+                          <Link2 className="w-3.5 h-3.5 text-[#93a1a1]" />
+                        ) : (
+                          <Film className="w-3.5 h-3.5 text-[#93a1a1]" />
+                        )}
+                      </div>
+                      <span className="truncate">{it.name}</span>
+                    </td>
+                    <td className="px-2 py-2">
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full border ${statusStyle[it.status]}`}>{statusLabel[it.status]}</span>
+                    </td>
+                    <td className="px-2 py-2">
+                      {classified ? (
+                        <span className={`font-bold ${classified.isSynthetic ? "text-[#dc322f]" : "text-[#859900]"}`}>
+                          {classified.isSynthetic ? "AI" : "Real"}
+                        </span>
+                      ) : (
+                        <span className={theme.textSub}>—</span>
+                      )}
+                    </td>
+                    <td className="px-2 py-2">
+                      {classified ? (
+                        <div className="flex items-center gap-1.5">
+                          <div className={`w-12 h-1.5 rounded-full ${theme.bgMain} overflow-hidden`}>
+                            <div
+                              className={classified.isSynthetic ? "bg-[#dc322f] h-full" : "bg-[#859900] h-full"}
+                              style={{ width: `${classified.probability_ai * 100}%` }}
+                            />
+                          </div>
+                          <span className={theme.textSub}>{(classified.probability_ai * 100).toFixed(0)}%</span>
+                        </div>
+                      ) : (
+                        <span className={theme.textSub}>—</span>
+                      )}
+                    </td>
+                    <td className="px-2 py-2">
+                      <span className={isMismatch ? "text-[#dc322f] font-bold" : theme.textSub}>{truthLabel}</span>
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeBatchItem(it.id);
+                        }}
+                        className={`p-1 rounded hover:opacity-70 ${theme.textSub}`}
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Panel chi tiết trượt từ bên phải — mở khi bấm 1 dòng, có video/link + biểu đồ */}
+      {selectedBatchItem && (
+        <>
+          <div
+            className="fixed inset-0 bg-black/40 z-40"
+            onClick={() => setSelectedBatchId(null)}
+          />
+          <div
+            className={`fixed top-0 right-0 h-full w-full max-w-xl ${theme.bgCard} border-l ${theme.border} z-50 overflow-y-auto p-6 font-sans transition-colors`}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h2 className={`text-sm font-normal ${theme.textHeading} uppercase tracking-wider truncate ${notoSerif.className} italic`}>
+                {selectedBatchItem.name}
+              </h2>
+              <button onClick={() => setSelectedBatchId(null)} className={`p-1.5 rounded-lg hover:opacity-70 ${theme.textSub} shrink-0 ml-2`}>
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className={`relative aspect-video ${theme.bgMain} rounded-lg overflow-hidden border ${theme.border} flex items-center justify-center mb-4`}>
+              {selectedBatchItem.previewUrl ? (
+                <video
+                  key={selectedBatchItem.id}
+                  ref={batchVideoRef}
+                  src={selectedBatchItem.previewUrl}
+                  controls
+                  onTimeUpdate={handleBatchTimeUpdate}
+                  onSeeked={handleBatchTimeUpdate}
+                  className="w-full h-full object-contain"
+                />
+              ) : (
+                <div className="flex flex-col items-center gap-2 text-center px-6">
+                  <Link2 className={`w-8 h-8 ${theme.textSub}`} />
+                  {selectedBatchItem.sourceUrl && (
+                    <a href={selectedBatchItem.sourceUrl} target="_blank" rel="noreferrer" className="text-xs text-[#268bd2] hover:underline break-all">
+                      {selectedBatchItem.sourceUrl}
+                    </a>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {selectedBatchItem.status === "error" && (
+              <p className="text-xs text-[#dc322f] mb-4">{selectedBatchItem.error}</p>
+            )}
+
+            {selectedBatchItem.resultsByWeight && (
+              <WeightResultTabs
+                weights={availableWeights}
+                resultsByWeight={selectedBatchItem.resultsByWeight}
+                activeWeightId={activeWeightId}
+                onSelect={setActiveWeightId}
+                theme={theme}
+              />
+            )}
+
+            {activeBatchEntry && !activeBatchEntry.error && (
+              <>
+                <ResultSummary result={activeBatchEntry.result} theme={theme} threshold={threshold} />
+                {activeBatchEntry.scores.length > 0 && (
+                  <div className="mt-4">
+                    <p className={`text-xs ${theme.textMain} mb-2`}>Bấm vào biểu đồ để tua video tới đúng thời điểm đó.</p>
+                    <ScoreChart
+                      data={activeBatchEntry.scores}
+                      currentTime={batchCurrentTime}
+                      onSeek={handleBatchSeek}
+                      isDarkMode={isDarkMode}
+                      threshold={threshold}
+                      height={260}
+                    />
+                  </div>
+                )}
+              </>
+            )}
+            {activeBatchEntry?.error && <p className="text-xs text-[#dc322f] mt-2">{activeBatchEntry.error}</p>}
+            {selectedBatchItem.status === "done" && !activeWeightId && (
+              <p className={`text-xs ${theme.textSub} mt-2`}>Chọn 1 weight ở trên để xem kết quả chi tiết.</p>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function SyntheticVideoDetector() {
   const [activeTab, setActiveTab] = useState<"single" | "batch">("single");
+  // Chế độ giao diện cấp cao nhất: "classic" = giao diện hiện tại (2 tab Single/
+  // Batch), "dashboard" = giao diện dashboard doanh nghiệp mới. Cả 2 dùng
+  // chung TOÀN BỘ state bên dưới (batchItems, threshold, weight đã chọn...)
+  // nên chuyển qua lại không mất dữ liệu đang có.
+  const [appMode, setAppMode] = useState<"classic" | "dashboard">("classic");
+  const [dashboardSearch, setDashboardSearch] = useState("");
+  const [dashboardStatusFilter, setDashboardStatusFilter] = useState<"all" | BatchStatus>("all");
+  const [dashboardLabelFilter, setDashboardLabelFilter] = useState<"all" | "ai" | "real" | "mismatch">("all");
   const [isDarkMode, setIsDarkMode] = useState(true);
 
   // Ngưỡng phân loại — chỉnh được trực tiếp trên UI, áp dụng ngay lập tức
@@ -868,6 +1431,10 @@ export default function SyntheticVideoDetector() {
 
   // --- Single video tab state ---
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  // "file" = tải video lên trực tiếp (như cũ); "url" = dán link trang web
+  // (YouTube/TikTok/Facebook/...), backend tự tải bằng yt-dlp trước khi chạy.
+  const [singleSourceMode, setSingleSourceMode] = useState<"file" | "url">("file");
+  const [singleUrlInput, setSingleUrlInput] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [singleResultsByWeight, setSingleResultsByWeight] = useState<Record<string, WeightResult>>({});
   const [currentTime, setCurrentTime] = useState(0);
@@ -881,6 +1448,9 @@ export default function SyntheticVideoDetector() {
   const [batchCurrentTime, setBatchCurrentTime] = useState(0);
   const batchVideoRef = useRef<HTMLVideoElement>(null);
   const batchUrlsRef = useRef<string[]>([]);
+  // Ô nhập nhiều URL cùng lúc (mỗi dòng 1 link) để thêm vào hàng loạt
+  const [showBatchUrlBox, setShowBatchUrlBox] = useState(false);
+  const [batchUrlText, setBatchUrlText] = useState("");
 
   // Nhãn thật (ground truth) lấy từ file CSV: tên file -> 0 (Real) | 1 (AI)
   const [labelMap, setLabelMap] = useState<Map<string, number>>(new Map());
@@ -975,15 +1545,22 @@ export default function SyntheticVideoDetector() {
   };
 
   const handleAnalyze = async () => {
-    if (!selectedFile || selectedWeightIds.length === 0) return;
+    const isUrlMode = singleSourceMode === "url";
+    const trimmedUrl = singleUrlInput.trim();
+    if (isUrlMode ? !trimmedUrl : !selectedFile) return;
+    if (selectedWeightIds.length === 0) return;
     setIsAnalyzing(true);
     setSingleResultsByWeight({});
     setCurrentTime(0);
 
     try {
-      const resultsMap = mockMode
-        ? await generateMockResultsForWeights(selectedFile, selectedWeightIds)
-        : await analyzeVideoFile(selectedFile, selectedWeightIds);
+      const resultsMap = isUrlMode
+        ? mockMode
+          ? await generateMockResultsForWeights(trimmedUrl, selectedWeightIds)
+          : await analyzeVideoUrl(trimmedUrl, selectedWeightIds)
+        : mockMode
+        ? await generateMockResultsForWeights(selectedFile!.name, selectedWeightIds)
+        : await analyzeVideoFile(selectedFile!, selectedWeightIds);
       setSingleResultsByWeight(resultsMap);
       const firstOk = selectedWeightIds.find((id) => resultsMap[id] && !resultsMap[id].error) ?? selectedWeightIds[0];
       setActiveWeightId(firstOk ?? null);
@@ -1017,14 +1594,40 @@ export default function SyntheticVideoDetector() {
     if (!files || files.length === 0) return;
 
     const newItems: BatchItem[] = Array.from(files).map((file) => {
-      const url = URL.createObjectURL(file);
-      batchUrlsRef.current.push(url);
-      return { id: makeId(), file, url, status: "queued" as BatchStatus };
+      const previewUrl = URL.createObjectURL(file);
+      batchUrlsRef.current.push(previewUrl);
+      return { id: makeId(), name: file.name, file, previewUrl, status: "queued" as BatchStatus };
     });
 
     setBatchItems((prev) => [...prev, ...newItems]);
     // Cho phép chọn lại đúng file đó lần nữa sau này
     e.target.value = "";
+  };
+
+  // Thêm nhiều video vào hàng loạt từ URL trang web (YouTube/TikTok/
+  // Facebook/...) — mỗi dòng trong ô nhập là 1 link, backend sẽ tự tải mỗi
+  // link xuống bằng yt-dlp khi tới lượt xử lý (không có preview trình duyệt).
+  const handleAddBatchUrls = () => {
+    const urls = Array.from(
+      new Set(
+        batchUrlText
+          .split(/\r?\n/)
+          .map((u) => u.trim())
+          .filter(Boolean)
+      )
+    );
+    if (urls.length === 0) return;
+
+    const newItems: BatchItem[] = urls.map((u) => ({
+      id: makeId(),
+      name: u,
+      sourceUrl: u,
+      status: "queued" as BatchStatus,
+    }));
+
+    setBatchItems((prev) => [...prev, ...newItems]);
+    setBatchUrlText("");
+    setShowBatchUrlBox(false);
   };
 
   const handleCsvFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1068,14 +1671,22 @@ export default function SyntheticVideoDetector() {
   // đúng phần tử tương ứng trong danh sách. labelMap được truyền vào để chế
   // độ mock "lái" điểm giả theo nhãn CSV thật (nếu có) cho ra kết quả giống
   // một model thật hơn là random thuần.
-  const processOneBatchItem = async (id: string, file: File, weightIds: string[]) => {
+  // Xử lý 1 video (file hoặc URL, tuỳ item.file/item.sourceUrl có cái nào)
+  // với TẤT CẢ weight đã chọn CÙNG LÚC (1 request), cập nhật đúng phần tử
+  // tương ứng trong danh sách. labelMap được truyền vào để chế độ mock "lái"
+  // điểm giả theo nhãn CSV thật (nếu có) cho ra kết quả giống một model
+  // thật hơn là random thuần.
+  const processOneBatchItem = async (item: BatchItem, weightIds: string[]) => {
+    const { id } = item;
     setBatchItems((prev) => prev.map((it) => (it.id === id ? { ...it, status: "processing", error: undefined } : it)));
     setSelectedBatchId(id);
 
     try {
       const resultsMap = mockMode
-        ? await generateMockResultsForWeights(file, weightIds, labelMap.get(file.name))
-        : await analyzeVideoFile(file, weightIds);
+        ? await generateMockResultsForWeights(item.name, weightIds, labelMap.get(item.name))
+        : item.file
+        ? await analyzeVideoFile(item.file, weightIds)
+        : await analyzeVideoUrl(item.sourceUrl as string, weightIds);
       setBatchItems((prev) =>
         prev.map((it) => (it.id === id ? { ...it, status: "done", resultsByWeight: resultsMap } : it))
       );
@@ -1100,7 +1711,7 @@ export default function SyntheticVideoDetector() {
     setIsBatchRunning(true);
     for (const item of queue) {
       // eslint-disable-next-line no-await-in-loop
-      await processOneBatchItem(item.id, item.file, selectedWeightIds);
+      await processOneBatchItem(item, selectedWeightIds);
     }
     setIsBatchRunning(false);
   };
@@ -1122,7 +1733,7 @@ export default function SyntheticVideoDetector() {
   const doneCount = batchItems.filter((it) => it.status === "done").length;
   const pendingCount = batchItems.filter((it) => it.status === "queued" || it.status === "error").length;
   const matchedLabelCount = useMemo(
-    () => batchItems.filter((it) => labelMap.has(it.file.name)).length,
+    () => batchItems.filter((it) => labelMap.has(it.name)).length,
     [batchItems, labelMap]
   );
   const metrics = useMemo(
@@ -1153,6 +1764,24 @@ export default function SyntheticVideoDetector() {
             </span>
           </div>
           <div className="flex items-center gap-4 text-xs font-sans">
+            <div className={`flex items-center gap-1 p-1 rounded-full border ${theme.border} ${theme.bgCard}`}>
+              <button
+                onClick={() => setAppMode("classic")}
+                className={`px-3 py-1 rounded-full transition-colors ${
+                  appMode === "classic" ? "bg-[#268bd2] text-white font-bold" : `${theme.textSub} hover:opacity-80`
+                }`}
+              >
+                Giao diện chuẩn
+              </button>
+              <button
+                onClick={() => setAppMode("dashboard")}
+                className={`px-3 py-1 rounded-full transition-colors flex items-center gap-1.5 ${
+                  appMode === "dashboard" ? "bg-[#268bd2] text-white font-bold" : `${theme.textSub} hover:opacity-80`
+                }`}
+              >
+                <Gauge className="w-3.5 h-3.5" /> Dashboard
+              </button>
+            </div>
             {mockMode ? (
               <span className="flex items-center gap-1.5 text-[#b58900] bg-[#b58900]/10 px-3 py-1 rounded-full border border-[#b58900]/50">
                 <FlaskConical className="w-3.5 h-3.5" />
@@ -1176,6 +1805,8 @@ export default function SyntheticVideoDetector() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-6 py-8">
+      {appMode === "classic" ? (
+        <>
         {/* Title Section */}
         <div className="mb-6">
           <h1 className={`text-3xl font-normal italic ${theme.textHeading} mb-2 transition-colors`}>
@@ -1361,57 +1992,121 @@ export default function SyntheticVideoDetector() {
                     <h2 className={`text-sm font-normal ${theme.textHeading} uppercase tracking-wider flex items-center gap-2 font-sans transition-colors`}>
                       <Play className="w-4 h-4 text-[#859900]" /> Video Input
                     </h2>
-                    {selectedFile && (
+                    {singleSourceMode === "file" && selectedFile && (
                       <span className={`text-xs ${theme.textSub} truncate max-w-[200px] font-sans`}>
                         {selectedFile.name}
                       </span>
                     )}
                   </div>
 
-                  {!selectedFile ? (
-                    <label className={`border-2 border-dashed ${theme.border} hover:border-[#859900] ${theme.inputBg} rounded-lg p-12 flex flex-col items-center justify-center cursor-pointer transition-all group`}>
-                      <Upload className="w-12 h-12 text-[#93a1a1] group-hover:text-[#859900] mb-4 transition-colors" />
-                      <p className={`text-sm ${theme.textHeading} font-medium mb-1 font-sans transition-colors`}>
-                        Drag and drop video here or <span className="text-[#268bd2]">browse files</span>
-                      </p>
-                      <p className={`text-xs ${theme.textMain} font-sans transition-colors`}>Supports MP4, MOV, AVI (Max 100MB)</p>
-                      <input type="file" accept="video/*" className="hidden" onChange={handleFileChange} />
-                    </label>
+                  {/* Chọn nguồn: tải file lên hay dán URL trang web (YouTube/TikTok/Facebook/...) */}
+                  <div className="flex items-center gap-2 mb-4 font-sans">
+                    <button
+                      onClick={() => setSingleSourceMode("file")}
+                      className={tabBtn(singleSourceMode === "file")}
+                    >
+                      <Upload className="w-3.5 h-3.5" /> Tải file
+                    </button>
+                    <button
+                      onClick={() => setSingleSourceMode("url")}
+                      className={tabBtn(singleSourceMode === "url")}
+                    >
+                      <Link2 className="w-3.5 h-3.5" /> Dán URL
+                    </button>
+                  </div>
+
+                  {singleSourceMode === "file" ? (
+                    !selectedFile ? (
+                      <label className={`border-2 border-dashed ${theme.border} hover:border-[#859900] ${theme.inputBg} rounded-lg p-12 flex flex-col items-center justify-center cursor-pointer transition-all group`}>
+                        <Upload className="w-12 h-12 text-[#93a1a1] group-hover:text-[#859900] mb-4 transition-colors" />
+                        <p className={`text-sm ${theme.textHeading} font-medium mb-1 font-sans transition-colors`}>
+                          Drag and drop video here or <span className="text-[#268bd2]">browse files</span>
+                        </p>
+                        <p className={`text-xs ${theme.textMain} font-sans transition-colors`}>Supports MP4, MOV, AVI (Max 100MB)</p>
+                        <input type="file" accept="video/*" className="hidden" onChange={handleFileChange} />
+                      </label>
+                    ) : (
+                      <div className="space-y-4">
+                        <div className={`relative aspect-video ${theme.bgMain} rounded-lg overflow-hidden border ${theme.border} flex items-center justify-center`}>
+                          {videoUrl && (
+                            <video
+                              ref={videoRef}
+                              src={videoUrl}
+                              controls
+                              onTimeUpdate={handleTimeUpdate}
+                              onSeeked={handleTimeUpdate}
+                              className="w-full h-full object-contain"
+                            />
+                          )}
+                        </div>
+
+                        <div className="flex gap-3 font-sans">
+                          <button
+                            onClick={handleAnalyze}
+                            disabled={isAnalyzing || selectedWeightIds.length === 0}
+                            className="flex-1 bg-[#859900] hover:brightness-110 text-[#002b36] font-bold py-3 px-6 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                          >
+                            {isAnalyzing ? (
+                              <>
+                                <RefreshCw className="w-5 h-5 animate-spin" /> Analyzing frames...
+                              </>
+                            ) : (
+                              <>
+                                <Cpu className="w-5 h-5" /> Chạy pipeline AI xử lí ({selectedWeightIds.length} weight)
+                              </>
+                            )}
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              setSelectedFile(null);
+                              setSingleResultsByWeight({});
+                            }}
+                            className={`px-4 py-3 border ${theme.border} ${theme.btnCancel} rounded-lg text-sm font-medium transition-colors`}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )
                   ) : (
                     <div className="space-y-4">
-                      <div className={`relative aspect-video ${theme.bgMain} rounded-lg overflow-hidden border ${theme.border} flex items-center justify-center`}>
-                        {videoUrl && (
-                          <video
-                            ref={videoRef}
-                            src={videoUrl}
-                            controls
-                            onTimeUpdate={handleTimeUpdate}
-                            onSeeked={handleTimeUpdate}
-                            className="w-full h-full object-contain"
-                          />
+                      <input
+                        type="url"
+                        value={singleUrlInput}
+                        onChange={(e) => setSingleUrlInput(e.target.value)}
+                        placeholder="Dán link YouTube / TikTok / Facebook..."
+                        className={`w-full px-4 py-3 rounded-lg border ${theme.border} ${theme.inputBg} ${theme.textHeading} text-sm font-sans outline-none focus:border-[#859900] transition-colors`}
+                      />
+                      <div className={`aspect-video ${theme.bgMain} rounded-lg border ${theme.border} flex flex-col items-center justify-center gap-2 px-6 text-center`}>
+                        <Link2 className={`w-8 h-8 ${theme.textSub}`} />
+                        {singleUrlInput.trim() ? (
+                          <p className={`text-xs ${theme.textSub} font-sans break-all`}>{singleUrlInput.trim()}</p>
+                        ) : (
+                          <p className={`text-xs ${theme.textMain} font-sans`}>Video sẽ được backend tải trực tiếp từ link này (yt-dlp) rồi chạy pipeline — không xem trước được ở đây.</p>
                         )}
                       </div>
 
                       <div className="flex gap-3 font-sans">
                         <button
                           onClick={handleAnalyze}
-                          disabled={isAnalyzing || selectedWeightIds.length === 0}
+                          disabled={isAnalyzing || selectedWeightIds.length === 0 || !singleUrlInput.trim()}
                           className="flex-1 bg-[#859900] hover:brightness-110 text-[#002b36] font-bold py-3 px-6 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50"
                         >
                           {isAnalyzing ? (
                             <>
-                              <RefreshCw className="w-5 h-5 animate-spin" /> Analyzing frames...
+                              <RefreshCw className="w-5 h-5 animate-spin" /> Đang tải & phân tích...
                             </>
                           ) : (
                             <>
-                              <Cpu className="w-5 h-5" /> Chạy pipeline AI xử lí ({selectedWeightIds.length} weight)
+                              <Cpu className="w-5 h-5" /> Tải & chạy pipeline AI ({selectedWeightIds.length} weight)
                             </>
                           )}
                         </button>
 
                         <button
                           onClick={() => {
-                            setSelectedFile(null);
+                            setSingleUrlInput("");
                             setSingleResultsByWeight({});
                           }}
                           className={`px-4 py-3 border ${theme.border} ${theme.btnCancel} rounded-lg text-sm font-medium transition-colors`}
@@ -1520,6 +2215,13 @@ export default function SyntheticVideoDetector() {
                     <Upload className="w-3.5 h-3.5" /> Thêm video
                     <input type="file" accept="video/*" multiple className="hidden" onChange={handleBatchFilesSelected} />
                   </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowBatchUrlBox((v) => !v)}
+                    className={`text-xs px-3 py-2 rounded-lg border ${theme.border} ${theme.btnCancel} cursor-pointer flex items-center gap-2 transition-colors`}
+                  >
+                    <Link2 className="w-3.5 h-3.5" /> Thêm từ URL
+                  </button>
                   <label
                     className={`text-xs px-3 py-2 rounded-lg border ${theme.border} ${theme.btnCancel} cursor-pointer flex items-center gap-2 transition-colors`}
                   >
@@ -1558,6 +2260,37 @@ export default function SyntheticVideoDetector() {
                 </div>
               </div>
 
+              {/* Ô dán nhiều URL cùng lúc — mỗi dòng 1 link */}
+              {showBatchUrlBox && (
+                <div className={`mb-4 p-3 rounded-lg border ${theme.border} ${theme.bgMain} font-sans`}>
+                  <textarea
+                    value={batchUrlText}
+                    onChange={(e) => setBatchUrlText(e.target.value)}
+                    placeholder={"Dán link YouTube / TikTok / Facebook..., mỗi dòng 1 link"}
+                    rows={3}
+                    className={`w-full px-3 py-2 rounded-lg border ${theme.border} ${theme.inputBg} ${theme.textHeading} text-xs font-sans outline-none focus:border-[#859900] mb-2 transition-colors`}
+                  />
+                  <div className="flex justify-end gap-2">
+                    <button
+                      onClick={() => {
+                        setShowBatchUrlBox(false);
+                        setBatchUrlText("");
+                      }}
+                      className={`text-xs px-3 py-1.5 rounded-lg border ${theme.border} ${theme.btnCancel} transition-colors`}
+                    >
+                      Hủy
+                    </button>
+                    <button
+                      onClick={handleAddBatchUrls}
+                      disabled={!batchUrlText.trim()}
+                      className="text-xs font-bold px-3 py-1.5 rounded-lg bg-[#859900] hover:brightness-110 text-[#002b36] disabled:opacity-50 transition-all"
+                    >
+                      Thêm vào danh sách
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Thông tin file CSV nhãn đang dùng */}
               {csvInfo && (
                 <div className={`flex items-center justify-between mb-4 px-3 py-2 rounded-lg ${theme.bgMain} border ${theme.border} font-sans text-xs`}>
@@ -1592,7 +2325,7 @@ export default function SyntheticVideoDetector() {
                     <BatchGridCard
                       key={item.id}
                       item={item}
-                      groundTruth={labelMap.get(item.file.name)}
+                      groundTruth={labelMap.get(item.name)}
                       threshold={threshold}
                       activeWeightId={activeWeightId}
                       isSelected={selectedBatchId === item.id}
@@ -1610,24 +2343,43 @@ export default function SyntheticVideoDetector() {
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                 <div className="lg:col-span-7 space-y-6">
                   <div className={`${theme.bgCard} border ${theme.border} p-6 transition-colors duration-300`}>
-                    <h2 className={`text-sm font-normal ${theme.textHeading} uppercase tracking-wider mb-4 flex items-center gap-2 font-sans transition-colors`}>
-                      <Play className="w-4 h-4 text-[#859900]" /> {selectedBatchItem.file.name}
+                    <h2 className={`text-sm font-normal ${theme.textHeading} uppercase tracking-wider mb-4 flex items-center gap-2 font-sans transition-colors truncate`}>
+                      <Play className="w-4 h-4 text-[#859900] shrink-0" /> <span className="truncate">{selectedBatchItem.name}</span>
                     </h2>
                     <div className={`relative aspect-video ${theme.bgMain} rounded-lg overflow-hidden border ${theme.border} flex items-center justify-center`}>
-                      <video
-                        key={selectedBatchItem.id}
-                        ref={batchVideoRef}
-                        src={selectedBatchItem.url}
-                        controls
-                        onTimeUpdate={handleBatchTimeUpdate}
-                        onSeeked={handleBatchTimeUpdate}
-                        className="w-full h-full object-contain"
-                      />
+                      {selectedBatchItem.previewUrl ? (
+                        <video
+                          key={selectedBatchItem.id}
+                          ref={batchVideoRef}
+                          src={selectedBatchItem.previewUrl}
+                          controls
+                          onTimeUpdate={handleBatchTimeUpdate}
+                          onSeeked={handleBatchTimeUpdate}
+                          className="w-full h-full object-contain"
+                        />
+                      ) : (
+                        <div className="flex flex-col items-center gap-2 text-center px-6">
+                          <Link2 className={`w-8 h-8 ${theme.textSub}`} />
+                          {selectedBatchItem.sourceUrl && (
+                            <a
+                              href={selectedBatchItem.sourceUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-xs text-[#268bd2] hover:underline break-all font-sans"
+                            >
+                              {selectedBatchItem.sourceUrl}
+                            </a>
+                          )}
+                          <p className={`text-[11px] ${theme.textMain} font-sans`}>
+                            Video được backend tải trực tiếp từ link này để phân tích, không xem trước được ở đây.
+                          </p>
+                        </div>
+                      )}
                     </div>
-                    {labelMap.has(selectedBatchItem.file.name) && (
+                    {labelMap.has(selectedBatchItem.name) && (
                       <p className={`text-xs ${theme.textSub} font-sans mt-3`}>
                         Nhãn thật (CSV): <span className={`font-bold ${theme.textHeading}`}>
-                          {labelMap.get(selectedBatchItem.file.name) === 1 ? "AI" : "Real"}
+                          {labelMap.get(selectedBatchItem.name) === 1 ? "AI" : "Real"}
                         </span>
                       </p>
                     )}
@@ -1737,6 +2489,56 @@ export default function SyntheticVideoDetector() {
               )}
           </div>
         )}
+        </>
+      ) : (
+        <DashboardView
+          theme={theme}
+          isDarkMode={isDarkMode}
+          mockMode={mockMode}
+          setMockMode={(v: boolean) => {
+            setMockMode(v);
+            hasAutoSelectedRef.current = false;
+          }}
+          threshold={threshold}
+          setThreshold={setThreshold}
+          availableWeights={availableWeights}
+          selectedWeightIds={selectedWeightIds}
+          toggleWeightSelected={toggleWeightSelected}
+          activeWeightId={activeWeightId}
+          setActiveWeightId={setActiveWeightId}
+          weightsError={weightsError}
+          loadWeights={loadWeights}
+          batchItems={batchItems}
+          labelMap={labelMap}
+          metrics={metrics}
+          isBatchRunning={isBatchRunning}
+          runAllBatch={runAllBatch}
+          removeBatchItem={removeBatchItem}
+          handleBatchFilesSelected={handleBatchFilesSelected}
+          handleAddBatchUrls={handleAddBatchUrls}
+          showBatchUrlBox={showBatchUrlBox}
+          setShowBatchUrlBox={setShowBatchUrlBox}
+          batchUrlText={batchUrlText}
+          setBatchUrlText={setBatchUrlText}
+          handleCsvFileSelected={handleCsvFileSelected}
+          csvInfo={csvInfo}
+          downloadResultsCsv={downloadResultsCsv}
+          search={dashboardSearch}
+          setSearch={setDashboardSearch}
+          statusFilter={dashboardStatusFilter}
+          setStatusFilter={setDashboardStatusFilter}
+          labelFilter={dashboardLabelFilter}
+          setLabelFilter={setDashboardLabelFilter}
+          selectedBatchId={selectedBatchId}
+          setSelectedBatchId={setSelectedBatchId}
+          selectedBatchItem={selectedBatchItem}
+          activeBatchEntry={activeBatchEntry}
+          batchVideoRef={batchVideoRef}
+          batchCurrentTime={batchCurrentTime}
+          handleBatchTimeUpdate={handleBatchTimeUpdate}
+          handleBatchSeek={handleBatchSeek}
+        />
+      )}
       </main>
     </div>
   );

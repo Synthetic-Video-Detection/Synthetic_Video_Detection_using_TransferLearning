@@ -689,7 +689,7 @@ function ScoreChart({
             fontSize: 12,
           }}
           labelFormatter={(t) => `t = ${Number(t).toFixed(2)}s`}
-          formatter={(v: number) => [Number(v).toFixed(3), "Synthetic score"]}
+          formatter={(v) => [Number(v).toFixed(3), "Synthetic score"]}
         />
         <Legend verticalAlign="top" align="right" wrapperStyle={{ fontSize: 12, paddingBottom: 8 }} />
         <Line
@@ -993,7 +993,7 @@ function DashboardView({
   setSelectedBatchId: (id: string | null) => void;
   selectedBatchItem: BatchItem | null;
   activeBatchEntry: WeightResult | undefined;
-  batchVideoRef: React.RefObject<HTMLVideoElement>;
+  batchVideoRef: React.RefObject<HTMLVideoElement | null>;
   batchCurrentTime: number;
   handleBatchTimeUpdate: () => void;
   handleBatchSeek: (t: number) => void;

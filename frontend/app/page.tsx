@@ -1,6 +1,6 @@
 "use client";
+
 import React, { useCallback, useMemo, useState, useRef, useEffect } from "react";
-import { Noto_Serif } from "next/font/google";
 import {
   Upload,
   Play,
@@ -38,86 +38,51 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-// Font "Noto Serif" có đầy đủ bảng chữ Việt (dấu thanh, ký tự ghép) —
-// font-serif mặc định của Tailwind (Georgia/Times New Roman) thiếu glyph
-// tiếng Việt nên trình duyệt phải chắp vá bằng font hệ thống, gây ra lỗi
-// hiển thị kiểu "nhiề u" (chữ bị tách, lệch khoảng cách) như đã gặp.
-const notoSerif = Noto_Serif({
-  subsets: ["vietnamese", "latin"],
-  weight: ["400", "700"],
-  style: ["normal", "italic"],
-  display: "swap",
-});
-
 type ScorePoint = { time: number; score: number };
 
-type AnalysisResult = { isSynthetic: boolean; confidence: number; probability_ai?: number };
+type AnalysisResult = {
+  isSynthetic: boolean;
+  confidence: number;
+  probability_ai?: number;
+};
 
 type BatchStatus = "queued" | "processing" | "done" | "error";
 
-// Một weight (bộ trọng số) khả dụng trên Google Drive — mỗi weight tương
-// ứng 1 thư mục con trong WEIGHTS_ROOT ở backend, chứa best_model.pt +
-// scaler.joblib. Danh sách này được poll định kỳ từ backend nên khi có
-// weight mới (hoặc weight bị ghi đè) trên Drive, nó tự xuất hiện/tự cập
-// nhật trên UI mà không cần refresh trang hay restart Colab.
 type WeightInfo = {
   id: string;
   name: string;
-  updated_at: number; // unix seconds — thời điểm best_model.pt/scaler.joblib được sửa lần cuối
+  updated_at: number;
   ready: boolean;
 };
 
-// Kết quả chạy pipeline với MỘT weight cụ thể cho MỘT video. `error` chỉ
-// set khi riêng weight này lỗi (vd bị xoá khỏi Drive giữa chừng) — các
-// weight khác trong cùng lần chạy vẫn có thể thành công bình thường.
-type WeightResult = { result: AnalysisResult; scores: ScorePoint[]; error?: string };
-
-// Nguồn video của 1 item trong batch: HOẶC file tải lên trực tiếp, HOẶC 1
-// URL trang web (YouTube/TikTok/Facebook/...) mà backend sẽ tự tải xuống
-// bằng yt-dlp trước khi chạy pipeline — không bao giờ có cả 2 cùng lúc.
-type BatchItem = {
-  id: string;
-  name: string; // tên hiển thị + khoá khớp nhãn CSV — là file.name hoặc chính URL đã dán
-  file?: File; // chỉ có khi nguồn là file tải lên trực tiếp
-  sourceUrl?: string; // chỉ có khi nguồn là URL trang web
-  previewUrl?: string; // blob URL để xem trước trong trình duyệt — chỉ có khi có `file`
-  status: BatchStatus;
-  // Kết quả của video này, theo từng weight đã chọn khi chạy — 1 request
-  // /upload (hoặc /upload_url) duy nhất trả về kết quả cho TẤT CẢ weight đã
-  // chọn cùng lúc (backend chỉ trích xuất đặc trưng CLIP+DINOv2 một lần rồi
-  // chấm điểm với từng weight, không chạy lại backbone cho mỗi weight).
-  resultsByWeight?: Record<string, WeightResult>;
-  error?: string; // lỗi của CẢ request (vd mất kết nối) — khác với lỗi riêng từng weight
+type WeightResult = {
+  result: AnalysisResult;
+  scores: ScorePoint[];
+  error?: string;
 };
 
-// Ngưỡng mặc định khi mở trang. Có thể chỉnh trực tiếp trên giao diện
-// (xem state `threshold` trong component) — không còn là hằng số cố định.
+type BatchItem = {
+  id: string;
+  name: string;
+  file?: File;
+  sourceUrl?: string;
+  previewUrl?: string;
+  status: BatchStatus;
+  resultsByWeight?: Record<string, WeightResult>;
+  error?: string;
+};
+
 const DEFAULT_THRESHOLD = 0.5;
-
-// REPLACE THIS with your active Ngrok base URL from Colab — KHÔNG có dấu
-// "/" ở cuối và KHÔNG kèm "/upload" (các hàm gọi API bên dưới tự nối path).
 const NGROK_BASE = "https://derived-expanse-roundish.ngrok-free.dev";
-
-// Tần suất frontend tự hỏi backend "hiện có những weight nào" — đây là cơ
-// chế "tự cập nhật khi Drive có weight mới": backend quét lại thư mục
-// Drive mỗi khi nhận request này, nên chỉ cần đợi tối đa khoảng thời gian
-// này là danh sách weight trên UI sẽ khớp với Drive.
 const WEIGHTS_POLL_INTERVAL_MS = 8000;
 
 let idCounter = 0;
+
 function makeId() {
   idCounter += 1;
   return `vid_${Date.now()}_${idCounter}`;
 }
 
-// --------------------------------------------------------------------- //
-// Vì backend trả về "probability_ai" (điểm thô 0..1) song song với "label"
-// (nhãn backend tự chấm ở ngưỡng CỐ ĐỊNH 0.5), toàn bộ phần hiển thị/chấm
-// điểm ở frontend đều nên tính lại nhãn + độ tin cậy từ probability_ai theo
-// đúng threshold người dùng đang chỉnh trên UI — thay vì dùng thẳng "label"
-// gốc từ backend. Nhờ vậy kéo thanh trượt threshold có thể đổi màu/nhãn
-// NGAY LẬP TỨC cho toàn bộ video đã chạy, không cần gọi lại pipeline.
-// --------------------------------------------------------------------- //
 function classifyWithThreshold(result: AnalysisResult, threshold: number) {
   const p = result.probability_ai ?? (result.isSynthetic ? 1 : 0);
   const isSynthetic = p > threshold;
@@ -128,24 +93,29 @@ function classifyWithThreshold(result: AnalysisResult, threshold: number) {
 function formatWeightTime(unixSeconds: number): string {
   if (!unixSeconds) return "";
   const d = new Date(unixSeconds * 1000);
-  return d.toLocaleString("vi-VN", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleString("vi-VN", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
-// Gọi API lấy danh sách weight hiện có trên Drive (backend tự quét
-// WEIGHTS_ROOT mỗi lần nhận request này).
 async function fetchAvailableWeights(): Promise<WeightInfo[]> {
   const response = await fetch(`${NGROK_BASE}/weights`, {
     headers: { "ngrok-skip-browser-warning": "true" },
   });
+
   if (!response.ok) throw new Error(`Server returned status: ${response.status}`);
+
   const data = await response.json();
   return Array.isArray(data.weights) ? data.weights : [];
 }
 
-// Gọi đúng 1 lần API upload cho 1 file, kèm danh sách weight muốn chạy —
-// backend trích xuất đặc trưng video MỘT LẦN rồi chấm điểm với từng weight,
-// trả về kết quả cho tất cả weight trong cùng 1 response.
-async function analyzeVideoFile(file: File, weightIds: string[]): Promise<Record<string, WeightResult>> {
+async function analyzeVideoFile(
+  file: File,
+  weightIds: string[]
+): Promise<Record<string, WeightResult>> {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("weights", weightIds.join(","));
@@ -159,16 +129,11 @@ async function analyzeVideoFile(file: File, weightIds: string[]): Promise<Record
   });
 
   if (!response.ok) {
-    // Backend (FastAPI) trả kèm JSON có trường "error" giải thích lý do cụ
-    // thể (ví dụ "Could not sample 8 frames..."), đọc ra để hiện thẳng lên
-    // card lỗi thay vì chỉ hiện mã trạng thái HTTP chung chung.
     let message = `Server returned status: ${response.status}`;
     try {
       const errBody = await response.json();
       if (errBody?.error) message = errBody.error;
-    } catch {
-      // Backend không trả JSON hợp lệ (vd: lỗi 502/504 từ Ngrok) -> giữ message mặc định
-    }
+    } catch {}
     throw new Error(message);
   }
 
@@ -178,6 +143,7 @@ async function analyzeVideoFile(file: File, weightIds: string[]): Promise<Record
 
   for (const wid of weightIds) {
     const r = rawResults[wid];
+
     if (!r || r.error) {
       out[wid] = {
         result: { isSynthetic: false, confidence: 0, probability_ai: 0 },
@@ -186,19 +152,29 @@ async function analyzeVideoFile(file: File, weightIds: string[]): Promise<Record
       };
       continue;
     }
+
     out[wid] = {
-      result: { isSynthetic: r.label, confidence: r.confidence, probability_ai: r.probability_ai },
-      scores: Array.isArray(r.scores) ? r.scores.map((p: any) => ({ time: Number(p.time), score: Number(p.score) })) : [],
+      result: {
+        isSynthetic: r.label,
+        confidence: r.confidence,
+        probability_ai: r.probability_ai,
+      },
+      scores: Array.isArray(r.scores)
+        ? r.scores.map((p: any) => ({
+            time: Number(p.time),
+            score: Number(p.score),
+          }))
+        : [],
     };
   }
 
   return out;
 }
 
-// Giống analyzeVideoFile, nhưng nguồn video là 1 URL trang web (YouTube/
-// TikTok/Facebook/...) thay vì file tải lên — backend tự tải video xuống
-// bằng yt-dlp (endpoint /upload_url/) rồi chạy đúng pipeline y hệt /upload/.
-async function analyzeVideoUrl(url: string, weightIds: string[]): Promise<Record<string, WeightResult>> {
+async function analyzeVideoUrl(
+  url: string,
+  weightIds: string[]
+): Promise<Record<string, WeightResult>> {
   const formData = new FormData();
   formData.append("url", url);
   formData.append("weights", weightIds.join(","));
@@ -216,9 +192,7 @@ async function analyzeVideoUrl(url: string, weightIds: string[]): Promise<Record
     try {
       const errBody = await response.json();
       if (errBody?.error) message = errBody.error;
-    } catch {
-      // Backend không trả JSON hợp lệ (vd: lỗi 502/504 từ Ngrok) -> giữ message mặc định
-    }
+    } catch {}
     throw new Error(message);
   }
 
@@ -228,6 +202,7 @@ async function analyzeVideoUrl(url: string, weightIds: string[]): Promise<Record
 
   for (const wid of weightIds) {
     const r = rawResults[wid];
+
     if (!r || r.error) {
       out[wid] = {
         result: { isSynthetic: false, confidence: 0, probability_ai: 0 },
@@ -236,23 +211,25 @@ async function analyzeVideoUrl(url: string, weightIds: string[]): Promise<Record
       };
       continue;
     }
+
     out[wid] = {
-      result: { isSynthetic: r.label, confidence: r.confidence, probability_ai: r.probability_ai },
-      scores: Array.isArray(r.scores) ? r.scores.map((p: any) => ({ time: Number(p.time), score: Number(p.score) })) : [],
+      result: {
+        isSynthetic: r.label,
+        confidence: r.confidence,
+        probability_ai: r.probability_ai,
+      },
+      scores: Array.isArray(r.scores)
+        ? r.scores.map((p: any) => ({
+            time: Number(p.time),
+            score: Number(p.score),
+          }))
+        : [],
     };
   }
 
   return out;
 }
 
-// --------------------------------------------------------------------- //
-// CHẾ ĐỘ TEST (MOCK) — sinh kết quả giả để kiểm tra toàn bộ giao diện
-// (lưới video, viền màu đúng/sai, chỉ số AUROC/Accuracy/..., thanh trượt
-// threshold, TAB weight) mà KHÔNG cần gọi Ngrok/Colab. Dùng PRNG có seed
-// theo tên file + id weight (mulberry32) để cùng 1 file + 1 weight luôn ra
-// cùng 1 kết quả giả giữa các lần chạy — và các weight khác nhau ra kết quả
-// khác nhau, để test việc chuyển tab có hoạt động đúng.
-// --------------------------------------------------------------------- //
 function stringSeed(str: string): number {
   let h = 0;
   for (let i = 0; i < str.length; i++) {
@@ -271,44 +248,57 @@ function mulberry32(seed: number) {
   };
 }
 
-// Danh sách weight giả cố định cho chế độ test — đủ 2 cái để kiểm tra UI
-// chọn nhiều weight + chuyển tab kết quả hoạt động đúng.
 function generateMockWeightsList(): WeightInfo[] {
   const now = Date.now() / 1000;
   return [
-    { id: "mock_v1", name: "CLIP-DinoResidual-BiLSTM (v1, giả lập)", updated_at: now - 3600, ready: true },
-    { id: "mock_v2", name: "CLIP-DinoResidual-BiLSTM (v2, giả lập)", updated_at: now - 300, ready: true },
+    {
+      id: "mock_v1",
+      name: "CLIP-DinoResidual-BiLSTM (v1, giả lập)",
+      updated_at: now - 3600,
+      ready: true,
+    },
+    {
+      id: "mock_v2",
+      name: "CLIP-DinoResidual-BiLSTM (v2, giả lập)",
+      updated_at: now - 300,
+      ready: true,
+    },
   ];
 }
 
-// groundTruth (nếu biết từ CSV) chỉ dùng để "lái" điểm giả cho GIỐNG một
-// model hoạt động khá tốt (~80% đúng) thay vì random 50/50 vô nghĩa —
-// hoàn toàn không đọc/không cần backend thật.
-// `key` là định danh dùng để seed PRNG — file.name khi nguồn là file tải
-// lên, hoặc chính URL đã dán khi nguồn là link trang web.
-function generateMockResult(key: string, weightId: string, groundTruth?: number): Promise<WeightResult> {
+function generateMockResult(
+  key: string,
+  weightId: string,
+  groundTruth?: number
+): Promise<WeightResult> {
   return new Promise((resolve) => {
-    const delay = 350 + Math.random() * 900; // mô phỏng độ trễ mạng/inference cho giống thật
+    const delay = 350 + Math.random() * 900;
+
     setTimeout(() => {
       const rng = mulberry32(stringSeed(`${key}::${weightId}`));
 
       let base: number;
-      if (groundTruth === 1) base = 0.55 + rng() * 0.4; // thiên về AI nhưng có nhiễu
-      else if (groundTruth === 0) base = rng() * 0.4; // thiên về Real nhưng có nhiễu
-      else base = rng(); // không biết nhãn thật -> ngẫu nhiên đều
 
-      const flip = rng() < 0.18; // ~18% khả năng "model giả" đoán sai hẳn, cho giống thật
+      if (groundTruth === 1) base = 0.55 + rng() * 0.4;
+      else if (groundTruth === 0) base = rng() * 0.4;
+      else base = rng();
+
+      const flip = rng() < 0.18;
       let probability_ai = flip ? 1 - base : base;
       probability_ai = Math.min(0.99, Math.max(0.01, probability_ai));
 
-      const isSynthetic = probability_ai > 0.5; // nhãn baseline (backend quy ước threshold 0.5)
+      const isSynthetic = probability_ai > 0.5;
       const confidence = isSynthetic ? probability_ai : 1 - probability_ai;
 
-      const duration = 8 + rng() * 40; // thời lượng giả 8-48s
+      const duration = 8 + rng() * 40;
       const scores: ScorePoint[] = [];
+
       for (let t = 0; t <= duration; t += 1) {
         const noise = (rng() - 0.5) * 0.25;
-        scores.push({ time: Math.round(t * 100) / 100, score: Math.min(1, Math.max(0, probability_ai + noise)) });
+        scores.push({
+          time: Math.round(t * 100) / 100,
+          score: Math.min(1, Math.max(0, probability_ai + noise)),
+        });
       }
 
       resolve({
@@ -329,27 +319,28 @@ async function generateMockResultsForWeights(
   groundTruth?: number
 ): Promise<Record<string, WeightResult>> {
   const entries = await Promise.all(
-    weightIds.map(async (wid) => [wid, await generateMockResult(key, wid, groundTruth)] as const)
+    weightIds.map(
+      async (wid) => [wid, await generateMockResult(key, wid, groundTruth)] as const
+    )
   );
+
   return Object.fromEntries(entries);
 }
 
-// --------------------------------------------------------------------- //
-// CSV parser tối giản (RFC4180: hỗ trợ field có dấu ngoặc kép / dấu phẩy
-// bên trong). Chỉ bắt buộc CSV có cột "name" và "label" (0 = Real, 1 = AI),
-// các cột khác (fps, model, ...) đều được bỏ qua an toàn nếu có.
-// --------------------------------------------------------------------- //
 function parseCsv(text: string): Record<string, string>[] {
-  const clean = text.replace(/^\uFEFF/, ""); // bỏ BOM nếu có
+  const clean = text.replace(/^\uFEFF/, "");
   const lines = clean.split(/\r\n|\n|\r/).filter((l) => l.trim().length > 0);
+
   if (lines.length === 0) return [];
 
   const parseLine = (line: string): string[] => {
     const cells: string[] = [];
     let cur = "";
     let inQuotes = false;
+
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
+
       if (inQuotes) {
         if (ch === '"') {
           if (line[i + 1] === '"') {
@@ -370,39 +361,58 @@ function parseCsv(text: string): Record<string, string>[] {
         cur += ch;
       }
     }
+
     cells.push(cur);
     return cells.map((c) => c.trim());
   };
 
   const headers = parseLine(lines[0]).map((h) => h.toLowerCase());
+
   return lines.slice(1).map((line) => {
     const cells = parseLine(line);
     const row: Record<string, string> = {};
+
     headers.forEach((h, idx) => {
       row[h] = cells[idx] ?? "";
     });
+
     return row;
   });
 }
 
-// name -> 0 (Real) | 1 (AI). Chấp nhận vài tên cột thay thế phổ biến,
-// và vài dạng giá trị chữ (AI/Real/Fake) phòng khi label không phải 0/1.
 function buildLabelMap(rows: Record<string, string>[]): Map<string, number> {
   const map = new Map<string, number>();
+
   for (const row of rows) {
-    const name = (row["name"] ?? row["filename"] ?? row["file"] ?? row["video"] ?? "").trim();
-    const rawLabel = row["label"] ?? row["class"] ?? row["ground_truth"] ?? row["y"] ?? "";
+    const name = (
+      row["name"] ??
+      row["filename"] ??
+      row["file"] ??
+      row["video"] ??
+      ""
+    ).trim();
+
+    const rawLabel =
+      row["label"] ??
+      row["class"] ??
+      row["ground_truth"] ??
+      row["y"] ??
+      "";
+
     if (!name || rawLabel === "") continue;
 
     const num = Number(rawLabel);
     let label: number;
+
     if (!Number.isNaN(num)) {
       label = num > 0 ? 1 : 0;
     } else {
       label = /^(ai|fake|synthetic)$/i.test(rawLabel.trim()) ? 1 : 0;
     }
+
     map.set(name, label);
   }
+
   return map;
 }
 
@@ -413,7 +423,6 @@ type Metrics = {
   fn: number;
   tn: number;
   accuracy: number;
-  // null = không đủ dữ liệu để tính (khác với 0%, vốn là một kết quả đo được)
   precision: number | null;
   recall: number | null;
   f1: number | null;
@@ -422,12 +431,6 @@ type Metrics = {
   nNeg: number;
 };
 
-// AUROC được tính bằng công thức Mann–Whitney U (dựa trên xếp hạng
-// probability_ai), không phụ thuộc threshold và không cần thư viện ngoài.
-// Các chỉ số còn lại (accuracy/precision/recall/f1) tính từ ma trận nhầm
-// lẫn ở ĐÚNG threshold người dùng đang chỉnh trên UI — VÀ chỉ tính trên kết
-// quả của weight đang được xem (tab weight hiện tại), vì mỗi weight cho ra
-// một bộ điểm số khác nhau.
 function computeMetrics(
   items: BatchItem[],
   labelMap: Map<string, number>,
@@ -437,21 +440,32 @@ function computeMetrics(
   if (!weightId) return null;
 
   const evaluable = items
-    .filter((it) => it.status === "done" && it.resultsByWeight?.[weightId] && !it.resultsByWeight[weightId].error && labelMap.has(it.name))
+    .filter(
+      (it) =>
+        it.status === "done" &&
+        it.resultsByWeight?.[weightId] &&
+        !it.resultsByWeight[weightId].error &&
+        labelMap.has(it.name)
+    )
     .map((it) => {
       const truth = labelMap.get(it.name) as number;
-      const classified = classifyWithThreshold(it.resultsByWeight![weightId].result, threshold);
+      const classified = classifyWithThreshold(
+        it.resultsByWeight![weightId].result,
+        threshold
+      );
       const pred = classified.isSynthetic ? 1 : 0;
       const score = classified.probability_ai;
+
       return { score, pred, truth };
     });
 
   if (evaluable.length === 0) return null;
 
-  let tp = 0,
-    fp = 0,
-    fn = 0,
-    tn = 0;
+  let tp = 0;
+  let fp = 0;
+  let fn = 0;
+  let tn = 0;
+
   for (const e of evaluable) {
     if (e.pred === 1 && e.truth === 1) tp++;
     else if (e.pred === 1 && e.truth === 0) fp++;
@@ -462,44 +476,67 @@ function computeMetrics(
   const n = evaluable.length;
   const accuracy = (tp + tn) / n;
 
-  // Precision không xác định được nếu model không dự đoán "AI" cho video nào (TP+FP=0).
-  // Recall không xác định được nếu tập nhãn không có video "AI" thật nào (TP+FN=0).
   const precision: number | null = tp + fp > 0 ? tp / (tp + fp) : null;
   const recall: number | null = tp + fn > 0 ? tp / (tp + fn) : null;
   const f1: number | null =
-    precision != null && recall != null ? (precision + recall > 0 ? (2 * precision * recall) / (precision + recall) : 0) : null;
+    precision != null && recall != null
+      ? precision + recall > 0
+        ? (2 * precision * recall) / (precision + recall)
+        : 0
+      : null;
 
   const nPos = evaluable.filter((e) => e.truth === 1).length;
   const nNeg = evaluable.filter((e) => e.truth === 0).length;
+
   let auroc: number | null = null;
 
   if (nPos > 0 && nNeg > 0) {
     const sorted = [...evaluable].sort((a, b) => a.score - b.score);
     const ranks = new Array(sorted.length).fill(0);
+
     let i = 0;
+
     while (i < sorted.length) {
       let j = i;
-      while (j + 1 < sorted.length && sorted[j + 1].score === sorted[i].score) j++;
-      const avgRank = (i + 1 + j + 1) / 2; // rank trung bình cho các giá trị bằng nhau (ties), 1-based
-      for (let k = i; k <= j; k++) ranks[k] = avgRank;
+
+      while (j + 1 < sorted.length && sorted[j + 1].score === sorted[i].score) {
+        j++;
+      }
+
+      const avgRank = (i + 1 + j + 1) / 2;
+
+      for (let k = i; k <= j; k++) {
+        ranks[k] = avgRank;
+      }
+
       i = j + 1;
     }
+
     let sumRankPos = 0;
+
     sorted.forEach((e, idx) => {
       if (e.truth === 1) sumRankPos += ranks[idx];
     });
+
     auroc = (sumRankPos - (nPos * (nPos + 1)) / 2) / (nPos * nNeg);
   }
 
-  return { n, tp, fp, fn, tn, accuracy, precision, recall, f1, auroc, nPos, nNeg };
+  return {
+    n,
+    tp,
+    fp,
+    fn,
+    tn,
+    accuracy,
+    precision,
+    recall,
+    f1,
+    auroc,
+    nPos,
+    nNeg,
+  };
 }
 
-// --------------------------------------------------------------------- //
-// Xuất CSV kết quả: mỗi dòng là (tên video, weight, nhãn dự đoán theo
-// threshold hiện tại, synthetic score thô, nhãn thật nếu có, đúng/sai) —
-// XUẤT CHO TẤT CẢ weight đã chạy (không chỉ weight đang xem trên tab), để
-// dễ so sánh nhiều weight cùng lúc ngoài Excel/Sheets.
-// --------------------------------------------------------------------- //
 function escapeCsvField(value: string): string {
   if (/[",\n\r]/.test(value)) {
     return `"${value.replace(/"/g, '""')}"`;
@@ -507,20 +544,45 @@ function escapeCsvField(value: string): string {
   return value;
 }
 
-function buildResultsCsv(items: BatchItem[], labelMap: Map<string, number>, threshold: number): string {
-  const header = ["name", "weight", "predicted_label", "synthetic_score", "ground_truth_label", "match"];
+function buildResultsCsv(
+  items: BatchItem[],
+  labelMap: Map<string, number>,
+  threshold: number
+): string {
+  const header = [
+    "name",
+    "weight",
+    "predicted_label",
+    "synthetic_score",
+    "ground_truth_label",
+    "match",
+  ];
+
   const rows: string[] = [];
 
   items.forEach((it) => {
     if (it.status !== "done" || !it.resultsByWeight) return;
+
     Object.entries(it.resultsByWeight).forEach(([wid, entry]) => {
       if (entry.error) return;
+
       const classified = classifyWithThreshold(entry.result, threshold);
       const predictedLabel = classified.isSynthetic ? "AI" : "Real";
       const groundTruthRaw = labelMap.get(it.name);
-      const groundTruthLabel = groundTruthRaw === undefined ? "" : groundTruthRaw === 1 ? "AI" : "Real";
+      const groundTruthLabel =
+        groundTruthRaw === undefined
+          ? ""
+          : groundTruthRaw === 1
+          ? "AI"
+          : "Real";
+
       const match =
-        groundTruthRaw === undefined ? "" : (classified.isSynthetic ? 1 : 0) === groundTruthRaw ? "correct" : "incorrect";
+        groundTruthRaw === undefined
+          ? ""
+          : (classified.isSynthetic ? 1 : 0) === groundTruthRaw
+          ? "correct"
+          : "incorrect";
+
       rows.push(
         [
           escapeCsvField(it.name),
@@ -537,21 +599,27 @@ function buildResultsCsv(items: BatchItem[], labelMap: Map<string, number>, thre
   return [header.join(","), ...rows].join("\r\n");
 }
 
-function downloadResultsCsv(items: BatchItem[], labelMap: Map<string, number>, threshold: number) {
+function downloadResultsCsv(
+  items: BatchItem[],
+  labelMap: Map<string, number>,
+  threshold: number
+) {
   const csvContent = buildResultsCsv(items, labelMap, threshold);
-  // Thêm BOM (\uFEFF) để Excel nhận đúng UTF-8, không bị lỗi font tiếng Việt khi mở file.
-  const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
+  const blob = new Blob(["\uFEFF" + csvContent], {
+    type: "text/csv;charset=utf-8;",
+  });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
+
   a.href = url;
   a.download = `ket_qua_tat_ca_weight_threshold_${Math.round(threshold * 100)}.csv`;
+
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
-// --- Theme type dùng chung cho các component con ---
 type Theme = {
   bgMain: string;
   bgCard: string;
@@ -563,14 +631,76 @@ type Theme = {
   btnCancel: string;
 };
 
-function ResultSummary({ result, theme, threshold }: { result: AnalysisResult; theme: Theme; threshold: number }) {
+const INTEGRITY_CSS = `
+  .integrity-ui,
+  .integrity-ui * {
+    font-family: Baskerville, "Baskerville Old Face", "Libre Baskerville", Georgia, "Times New Roman", serif !important;
+  }
+
+  .integrity-ui .rounded,
+  .integrity-ui .rounded-sm,
+  .integrity-ui .rounded-md,
+  .integrity-ui .rounded-lg,
+  .integrity-ui .rounded-xl,
+  .integrity-ui .rounded-2xl,
+  .integrity-ui .rounded-3xl,
+  .integrity-ui .rounded-full {
+    border-radius: 0 !important;
+  }
+
+  .integrity-ui .border {
+    border-width: 2px;
+  }
+
+  .integrity-ui .border-b {
+    border-bottom-width: 2px;
+  }
+
+  .integrity-ui .border-t {
+    border-top-width: 2px;
+  }
+
+  .integrity-ui .border-l {
+    border-left-width: 2px;
+  }
+
+  .integrity-ui .border-r {
+    border-right-width: 2px;
+  }
+
+  .integrity-ui .shadow-sm,
+  .integrity-ui .shadow,
+  .integrity-ui .shadow-md,
+  .integrity-ui .shadow-lg,
+  .integrity-ui .shadow-xl,
+  .integrity-ui .shadow-2xl {
+    box-shadow: none !important;
+  }
+
+  .integrity-ui .backdrop-blur,
+  .integrity-ui .backdrop-blur-sm,
+  .integrity-ui .backdrop-blur-md,
+  .integrity-ui .backdrop-blur-lg {
+    backdrop-filter: none !important;
+  }
+`;
+
+function ResultSummary({
+  result,
+  theme,
+  threshold,
+}: {
+  result: AnalysisResult;
+  theme: Theme;
+  threshold: number;
+}) {
   const classified = classifyWithThreshold(result, threshold);
   const prob = classified.probability_ai;
+
   return (
     <div className="space-y-6">
-      {/* Status Badge */}
       <div
-        className={`p-4 rounded-lg border flex items-center gap-4 ${
+        className={`p-4 border-2 flex items-center gap-4 ${
           classified.isSynthetic
             ? `${theme.bgMain} border-[#dc322f]/50 text-[#dc322f]`
             : `${theme.bgMain} border-[#859900]/50 text-[#859900]`
@@ -581,30 +711,37 @@ function ResultSummary({ result, theme, threshold }: { result: AnalysisResult; t
         ) : (
           <ShieldCheck className="w-10 h-10 shrink-0 text-[#859900]" />
         )}
+
         <div>
-          <h3 className={`font-normal italic text-lg ${notoSerif.className}`}>
+          <h3 className="font-semibold text-lg">
             {classified.isSynthetic ? "Khả năng cao Video AI" : "Video thật"}
           </h3>
-          <p className={`text-xs opacity-80 mt-1 font-sans ${theme.textMain}`}>
+          <p className={`text-xs opacity-80 mt-1 ${theme.textMain}`}>
             {classified.isSynthetic
-              ? "Hệ thống phát hiện ra những artifact đặc trưng của các công cụ Diffusion"
-              : "Khả năng cao video này là một video không được tạo bởi các công cụ Diffusion"}
+              ? "Hệ thống phát hiện ra những artifact đặc trưng của các công cụ Diffusion."
+              : "Khả năng cao video này không được tạo bởi các công cụ Diffusion."}
           </p>
         </div>
       </div>
 
-      {/* Gauge Metric */}
-      <div className={`${theme.bgMain} p-4 rounded-lg border ${theme.border} transition-colors`}>
-        <div className="flex justify-between text-xs mb-2 font-sans">
+      <div
+        className={`${theme.bgMain} p-4 border-2 ${theme.border} transition-colors`}
+      >
+        <div className="flex justify-between text-xs mb-2">
           <span className={theme.textSub}>Khả năng AI:</span>
-          <span className={`font-bold ${theme.textHeading}`}>{(prob * 100).toFixed(1)}%</span>
+          <span className={`font-bold ${theme.textHeading}`}>
+            {(prob * 100).toFixed(1)}%
+          </span>
         </div>
-        <div className={`relative w-full ${theme.bgCard} h-3 rounded-full overflow-hidden`}>
+
+        <div
+          className={`relative w-full ${theme.bgCard} h-3 overflow-hidden border ${theme.border}`}
+        >
           <div
-            className="bg-[#dc322f] h-full rounded-full transition-all duration-1000"
+            className="bg-[#dc322f] h-full transition-all duration-1000"
             style={{ width: `${prob * 100}%` }}
           ></div>
-          {/* Vạch đánh dấu ngưỡng (threshold) hiện tại trên thanh gauge */}
+
           <div
             className="absolute top-0 bottom-0 w-0.5 bg-white/80"
             style={{ left: `${threshold * 100}%` }}
@@ -613,19 +750,26 @@ function ResultSummary({ result, theme, threshold }: { result: AnalysisResult; t
         </div>
       </div>
 
-      {/* Detailed Metadata Breakdown */}
-      <div className="space-y-2 text-xs font-sans">
+      <div className="space-y-2 text-xs">
         <div className={`flex justify-between py-2 border-b ${theme.border}`}>
           <span className={theme.textMain}>Model Back-end:</span>
-          <span className={`${theme.textHeading} font-mono`}>FastAPI + PyTorch Pipeline</span>
+          <span className={`${theme.textHeading} tabular-nums`}>
+            FastAPI + PyTorch Pipeline
+          </span>
         </div>
+
         <div className={`flex justify-between py-2 border-b ${theme.border}`}>
           <span className={theme.textMain}>Điểm nghi ngờ:</span>
-          <span className={`${theme.textHeading} font-mono`}>{prob.toFixed(4)}</span>
+          <span className={`${theme.textHeading} tabular-nums`}>
+            {prob.toFixed(4)}
+          </span>
         </div>
+
         <div className={`flex justify-between py-2 border-b ${theme.border}`}>
           <span className={theme.textMain}>Threshold đang dùng:</span>
-          <span className={`${theme.textHeading} font-mono`}>{threshold.toFixed(2)}</span>
+          <span className={`${theme.textHeading} tabular-nums`}>
+            {threshold.toFixed(2)}
+          </span>
         </div>
       </div>
     </div>
@@ -659,12 +803,18 @@ function ScoreChart({
         }}
         style={{ cursor: "pointer" }}
       >
-        <CartesianGrid strokeDasharray="3 3" stroke={isDarkMode ? "#0a4a58" : "#d9d2b8"} />
+        <CartesianGrid
+          strokeDasharray="3 3"
+          stroke={isDarkMode ? "#0a4a58" : "#d9d2b8"}
+        />
         <XAxis
           dataKey="time"
           type="number"
           domain={["dataMin", "dataMax"]}
-          tick={{ fill: isDarkMode ? "#839496" : "#586e75", fontSize: 12 }}
+          tick={{
+            fill: isDarkMode ? "#839496" : "#586e75",
+            fontSize: 12,
+          }}
           label={{
             value: "Time (seconds)",
             position: "bottom",
@@ -674,7 +824,10 @@ function ScoreChart({
         />
         <YAxis
           domain={[0, 1]}
-          tick={{ fill: isDarkMode ? "#839496" : "#586e75", fontSize: 12 }}
+          tick={{
+            fill: isDarkMode ? "#839496" : "#586e75",
+            fontSize: 12,
+          }}
           label={{
             value: "Synthetic score",
             angle: -90,
@@ -691,7 +844,11 @@ function ScoreChart({
           labelFormatter={(t) => `t = ${Number(t).toFixed(2)}s`}
           formatter={(v) => [Number(v).toFixed(3), "Synthetic score"]}
         />
-        <Legend verticalAlign="top" align="right" wrapperStyle={{ fontSize: 12, paddingBottom: 8 }} />
+        <Legend
+          verticalAlign="top"
+          align="right"
+          wrapperStyle={{ fontSize: 12, paddingBottom: 8 }}
+        />
         <Line
           type="monotone"
           dataKey="score"
@@ -716,28 +873,41 @@ function ScoreChart({
           x={currentTime}
           stroke="#dc322f"
           strokeWidth={2}
-          label={{ value: "Current Time", position: "top", fill: "#dc322f", fontSize: 11 }}
+          label={{
+            value: "Current Time",
+            position: "top",
+            fill: "#dc322f",
+            fontSize: 11,
+          }}
         />
       </LineChart>
     </ResponsiveContainer>
   );
 }
 
-// Một ô thống kê trong bảng chỉ số (AUROC / Accuracy / Precision / Recall / F1)
-function MetricBox({ label, value, theme }: { label: string; value: string; theme: Theme }) {
+function MetricBox({
+  label,
+  value,
+  theme,
+}: {
+  label: string;
+  value: string;
+  theme: Theme;
+}) {
   return (
-    <div className={`${theme.bgMain} border ${theme.border} rounded-lg p-3 text-center`}>
-      <p className={`text-[11px] uppercase tracking-wider ${theme.textSub} font-sans mb-1`}>{label}</p>
-      <p className={`text-xl font-bold ${theme.textHeading} font-mono`}>{value}</p>
+    <div
+      className={`${theme.bgMain} border-2 ${theme.border} p-3 text-center`}
+    >
+      <p className={`text-[11px] uppercase tracking-wider ${theme.textSub} mb-1`}>
+        {label}
+      </p>
+      <p className={`text-xl font-bold ${theme.textHeading} tabular-nums`}>
+        {value}
+      </p>
     </div>
   );
 }
 
-// Thanh TAB chọn xem kết quả theo weight nào — dùng chung cho cả tab Video
-// đơn và tab Xử lý hàng loạt. Bấm 1 weight sẽ đổi `activeWeightId` (state ở
-// component cha), làm toàn bộ phần hiển thị kết quả bên dưới (ResultSummary,
-// biểu đồ, viền màu lưới video, bảng chỉ số...) đổi theo NGAY, không cần
-// chạy lại pipeline vì kết quả của mọi weight đã chọn đều được lưu sẵn.
 function WeightResultTabs({
   weights,
   resultsByWeight,
@@ -752,33 +922,38 @@ function WeightResultTabs({
   theme: Theme;
 }) {
   const knownIds = weights.map((w) => w.id);
-  // Weight đã có kết quả nhưng không còn trong danh sách khả dụng nữa (vd bị
-  // xoá khỏi Drive sau khi chạy) vẫn hiện tab, xếp ở cuối, để không mất kết
-  // quả cũ đã chạy được.
-  const extraIds = Object.keys(resultsByWeight).filter((id) => !knownIds.includes(id));
-  const orderedIds = [...knownIds.filter((id) => resultsByWeight[id]), ...extraIds];
+  const extraIds = Object.keys(resultsByWeight).filter(
+    (id) => !knownIds.includes(id)
+  );
+  const orderedIds = [
+    ...knownIds.filter((id) => resultsByWeight[id]),
+    ...extraIds,
+  ];
 
   if (orderedIds.length === 0) return null;
 
   return (
-    <div className="flex flex-wrap items-center gap-2 mb-4 font-sans">
+    <div className="flex flex-wrap items-center gap-2 mb-4">
       {orderedIds.map((id) => {
         const info = weights.find((w) => w.id === id);
         const entry = resultsByWeight[id];
         const hasError = !!entry?.error;
         const isActive = activeWeightId === id;
+
         return (
           <button
             key={id}
             onClick={() => onSelect(id)}
-            className={`text-xs px-3 py-1.5 rounded-lg border flex items-center gap-1.5 transition-all ${
+            className={`text-xs px-3 py-1.5 border-2 flex items-center gap-1.5 transition-all ${
               isActive
                 ? `${theme.bgMain} border-[#268bd2] ${theme.textHeading} font-bold`
                 : `${theme.bgCard} ${theme.border} ${theme.textSub} hover:opacity-80`
             }`}
             title={info?.name ?? id}
           >
-            {hasError && <span className="w-1.5 h-1.5 rounded-full bg-[#dc322f] shrink-0" />}
+            {hasError && (
+              <span className="w-1.5 h-1.5 bg-[#dc322f] shrink-0" />
+            )}
             <span className="truncate max-w-[160px]">{info?.name ?? id}</span>
           </button>
         );
@@ -787,14 +962,6 @@ function WeightResultTabs({
   );
 }
 
-// Thẻ video dạng lưới cho tab xử lý hàng loạt. Viền màu phản ánh kết quả
-// của weight đang được XEM (activeWeightId) — không phải toàn bộ weight đã
-// chạy — vì mỗi weight có thể cho ra kết quả khác nhau:
-// - chưa chạy / đang chạy: màu trung tính hoặc xanh dương nhấp nháy
-// - đã chạy nhưng KHÔNG có kết quả cho weight đang xem (lỗi hoặc weight đó
-//   không nằm trong lần chạy): màu trung tính
-// - có kết quả NHƯNG không có nhãn CSV để đối chiếu: theo màu nhãn dự đoán (cam = AI, lam = Real)
-// - có kết quả VÀ có nhãn CSV: xanh lá = dự đoán khớp nhãn thật, đỏ = dự đoán sai nhãn thật
 function BatchGridCard({
   item,
   groundTruth,
@@ -815,26 +982,38 @@ function BatchGridCard({
   disableRemove: boolean;
 }) {
   const activeEntry =
-    item.status === "done" && activeWeightId ? item.resultsByWeight?.[activeWeightId] : undefined;
-  const classified = activeEntry && !activeEntry.error ? classifyWithThreshold(activeEntry.result, threshold) : null;
+    item.status === "done" && activeWeightId
+      ? item.resultsByWeight?.[activeWeightId]
+      : undefined;
+
+  const classified =
+    activeEntry && !activeEntry.error
+      ? classifyWithThreshold(activeEntry.result, threshold)
+      : null;
+
   const predicted = classified ? (classified.isSynthetic ? 1 : 0) : undefined;
   const hasGroundTruth = groundTruth !== undefined;
-  const isCorrect = hasGroundTruth && predicted !== undefined ? predicted === groundTruth : undefined;
+  const isCorrect =
+    hasGroundTruth && predicted !== undefined
+      ? predicted === groundTruth
+      : undefined;
+
   const missingForActiveWeight = item.status === "done" && !classified;
 
-  let borderColor = "#0a4a58"; // mặc định (queued)
+  let borderColor = "#0a4a58";
+
   if (item.status === "processing") borderColor = "#268bd2";
   else if (item.status === "error") borderColor = "#dc322f";
   else if (item.status === "done") {
-    if (!classified) borderColor = "#586e75"; // chưa có kết quả cho weight đang xem
-    else if (isCorrect === true) borderColor = "#859900"; // đúng nhãn CSV -> xanh lá
-    else if (isCorrect === false) borderColor = "#dc322f"; // sai nhãn CSV -> đỏ
-    else borderColor = predicted === 1 ? "#b58900" : "#268bd2"; // không có nhãn để so -> theo màu dự đoán
+    if (!classified) borderColor = "#586e75";
+    else if (isCorrect === true) borderColor = "#859900";
+    else if (isCorrect === false) borderColor = "#dc322f";
+    else borderColor = predicted === 1 ? "#b58900" : "#268bd2";
   }
 
   return (
     <div
-      className="relative rounded-lg overflow-hidden cursor-pointer transition-transform hover:scale-[1.02] bg-black"
+      className="relative overflow-hidden cursor-pointer bg-black"
       style={{
         border: `3px solid ${borderColor}`,
         outline: isSelected ? "2px solid white" : "none",
@@ -844,49 +1023,61 @@ function BatchGridCard({
     >
       <div className="aspect-video w-full bg-black flex items-center justify-center">
         {item.previewUrl ? (
-          <video src={item.previewUrl} muted preload="metadata" className="w-full h-full object-cover pointer-events-none" />
+          <video
+            src={item.previewUrl}
+            muted
+            preload="metadata"
+            className="w-full h-full object-cover pointer-events-none"
+          />
         ) : (
           <Link2 className="w-6 h-6 text-white/40" />
         )}
       </div>
 
-      {/* Thanh trên: tên file/URL + nút xóa */}
-      <div className="absolute top-0 inset-x-0 px-2 py-1 bg-gradient-to-b from-black/80 to-transparent flex items-center justify-between gap-1 font-sans">
+      <div className="absolute top-0 inset-x-0 px-2 py-1 bg-black/80 flex items-center justify-between gap-1">
         <span className="text-[10px] text-white/90 truncate">{item.name}</span>
         <span
           onClick={(e) => {
             e.stopPropagation();
             if (!disableRemove) onRemove();
           }}
-          className={`p-0.5 rounded hover:bg-white/20 text-white/80 shrink-0 ${disableRemove ? "opacity-30 pointer-events-none" : ""}`}
+          className={`p-0.5 text-white/80 shrink-0 ${
+            disableRemove ? "opacity-30 pointer-events-none" : "hover:opacity-70"
+          }`}
         >
           <X className="w-3 h-3" />
         </span>
       </div>
 
-      {/* Overlay trạng thái khi đang chờ / đang chạy / lỗi */}
       {item.status === "queued" && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/30">
           <Clock className="w-6 h-6 text-white/70" />
         </div>
       )}
+
       {item.status === "processing" && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/40">
           <RefreshCw className="w-6 h-6 text-white animate-spin" />
         </div>
       )}
+
       {item.status === "error" && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/40">
           <X className="w-6 h-6 text-[#dc322f]" />
         </div>
       )}
 
-      {/* Thanh dưới: nhãn dự đoán (theo weight đang xem) + đối chiếu CSV (nếu có) */}
       {item.status === "done" && classified && (
-        <div className="absolute bottom-0 inset-x-0 px-2 py-1 bg-black/75 flex items-center justify-between font-sans">
-          <span className={`text-[10px] font-bold ${classified.isSynthetic ? "text-[#dc322f]" : "text-[#859900]"}`}>
-            {classified.isSynthetic ? "AI" : "Real"} · {(classified.probability_ai * 100).toFixed(0)}%
+        <div className="absolute bottom-0 inset-x-0 px-2 py-1 bg-black/75 flex items-center justify-between">
+          <span
+            className={`text-[10px] font-bold ${
+              classified.isSynthetic ? "text-[#dc322f]" : "text-[#859900]"
+            }`}
+          >
+            {classified.isSynthetic ? "AI" : "Real"} ·{" "}
+            {(classified.probability_ai * 100).toFixed(0)}%
           </span>
+
           {hasGroundTruth &&
             (isCorrect ? (
               <Check className="w-3.5 h-3.5 text-[#859900]" />
@@ -895,22 +1086,18 @@ function BatchGridCard({
             ))}
         </div>
       )}
+
       {missingForActiveWeight && (
-        <div className="absolute bottom-0 inset-x-0 px-2 py-1 bg-black/75 font-sans">
-          <span className="text-[10px] text-[#93a1a1]">Chưa có KQ cho weight này</span>
+        <div className="absolute bottom-0 inset-x-0 px-2 py-1 bg-black/75">
+          <span className="text-[10px] text-[#93a1a1]">
+            Chưa có KQ cho weight này
+          </span>
         </div>
       )}
     </div>
   );
 }
 
-// ============================================================================
-// DASHBOARD DOANH NGHIỆP — giao diện thứ 2, dày thông tin hơn, hướng tới vận
-// hành thực tế: threshold cố định trên cùng, hàng KPI, toolbar gọn, bảng dữ
-// liệu là trung tâm (lọc/tìm được), bấm 1 dòng mở panel chi tiết bên phải
-// (video/link + ResultSummary + biểu đồ điểm theo thời gian). Không có state
-// riêng ngoài bộ lọc/tìm kiếm — mọi thứ khác dùng chung với giao diện chuẩn.
-// ============================================================================
 function DashboardView({
   theme,
   isDarkMode,
@@ -974,15 +1161,23 @@ function DashboardView({
   isBatchRunning: boolean;
   runAllBatch: () => void;
   removeBatchItem: (id: string) => void;
-  handleBatchFilesSelected: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  handleBatchFilesSelected: (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => void;
   handleAddBatchUrls: () => void;
   showBatchUrlBox: boolean;
   setShowBatchUrlBox: (v: boolean | ((prev: boolean) => boolean)) => void;
   batchUrlText: string;
   setBatchUrlText: (v: string) => void;
-  handleCsvFileSelected: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  handleCsvFileSelected: (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => void;
   csvInfo: { fileName: string; totalRows: number } | null;
-  downloadResultsCsv: (items: BatchItem[], labelMap: Map<string, number>, threshold: number) => void;
+  downloadResultsCsv: (
+    items: BatchItem[],
+    labelMap: Map<string, number>,
+    threshold: number
+  ) => void;
   search: string;
   setSearch: (v: string) => void;
   statusFilter: "all" | BatchStatus;
@@ -999,29 +1194,68 @@ function DashboardView({
   handleBatchSeek: (t: number) => void;
 }) {
   const doneItems = batchItems.filter((it) => it.status === "done");
+
   const aiCount = doneItems.filter((it) => {
-    const entry = activeWeightId ? it.resultsByWeight?.[activeWeightId] : undefined;
-    return entry && !entry.error && classifyWithThreshold(entry.result, threshold).isSynthetic;
+    const entry = activeWeightId
+      ? it.resultsByWeight?.[activeWeightId]
+      : undefined;
+
+    return (
+      entry &&
+      !entry.error &&
+      classifyWithThreshold(entry.result, threshold).isSynthetic
+    );
   }).length;
-  const queueCount = batchItems.filter((it) => it.status === "queued" || it.status === "processing").length;
+
+  const queueCount = batchItems.filter(
+    (it) => it.status === "queued" || it.status === "processing"
+  ).length;
+
   const errorCount = batchItems.filter((it) => it.status === "error").length;
 
   const filteredItems = batchItems.filter((it) => {
-    if (search.trim() && !it.name.toLowerCase().includes(search.trim().toLowerCase())) return false;
-    if (statusFilter !== "all" && it.status !== statusFilter) return false;
+    if (
+      search.trim() &&
+      !it.name.toLowerCase().includes(search.trim().toLowerCase())
+    ) {
+      return false;
+    }
+
+    if (statusFilter !== "all" && it.status !== statusFilter) {
+      return false;
+    }
+
     if (labelFilter !== "all") {
-      const entry = activeWeightId ? it.resultsByWeight?.[activeWeightId] : undefined;
+      const entry = activeWeightId
+        ? it.resultsByWeight?.[activeWeightId]
+        : undefined;
+
       if (!entry || entry.error) return false;
+
       const classified = classifyWithThreshold(entry.result, threshold);
       const truth = labelMap.get(it.name);
+
       if (labelFilter === "ai" && !classified.isSynthetic) return false;
       if (labelFilter === "real" && classified.isSynthetic) return false;
-      if (labelFilter === "mismatch" && (truth === undefined || (classified.isSynthetic ? 1 : 0) === truth)) return false;
+
+      if (
+        labelFilter === "mismatch" &&
+        (truth === undefined || (classified.isSynthetic ? 1 : 0) === truth)
+      ) {
+        return false;
+      }
     }
+
     return true;
   });
 
-  const statusLabel: Record<BatchStatus, string> = { queued: "Chờ", processing: "Đang chạy", done: "Xong", error: "Lỗi" };
+  const statusLabel: Record<BatchStatus, string> = {
+    queued: "Chờ",
+    processing: "Đang chạy",
+    done: "Xong",
+    error: "Lỗi",
+  };
+
   const statusStyle: Record<BatchStatus, string> = {
     queued: "text-[#93a1a1] border-[#93a1a1]/40",
     processing: "text-[#268bd2] border-[#268bd2]/40",
@@ -1031,19 +1265,25 @@ function DashboardView({
 
   return (
     <div className="relative">
-      <h1 className={`text-2xl font-normal italic ${theme.textHeading} mb-4 font-serif transition-colors`}>
+      <h1 className={`text-2xl font-semibold ${theme.textHeading} mb-4`}>
         Dashboard vận hành
       </h1>
 
-      {/* Thanh điều khiển: threshold + mock mode — cố định trên cùng, áp dụng ngay */}
-      <div className={`${theme.bgCard} border ${theme.border} rounded-lg p-4 mb-4 flex flex-wrap items-center gap-6 font-sans transition-colors`}>
+      <div
+        className={`${theme.bgCard} border-2 ${theme.border} p-4 mb-4 flex flex-wrap items-center gap-6`}
+      >
         <div className="flex items-center gap-3 flex-1 min-w-[280px]">
           <SlidersHorizontal className="w-4 h-4 text-[#268bd2] shrink-0" />
           <div className="flex-1">
             <div className="flex justify-between text-xs mb-1">
-              <span className={theme.textSub}>Ngưỡng phân loại (threshold)</span>
-              <span className={`font-bold ${theme.textHeading}`}>{(threshold * 100).toFixed(0)}%</span>
+              <span className={theme.textSub}>
+                Ngưỡng phân loại (threshold)
+              </span>
+              <span className={`font-bold ${theme.textHeading}`}>
+                {(threshold * 100).toFixed(0)}%
+              </span>
             </div>
+
             <input
               type="range"
               min={0.01}
@@ -1055,6 +1295,7 @@ function DashboardView({
             />
           </div>
         </div>
+
         <label className="flex items-center gap-2 cursor-pointer shrink-0 text-xs">
           <input
             type="checkbox"
@@ -1062,29 +1303,48 @@ function DashboardView({
             onChange={(e) => setMockMode(e.target.checked)}
             className="accent-[#b58900]"
           />
-          <span className={`font-bold flex items-center gap-1 ${mockMode ? "text-[#b58900]" : theme.textHeading}`}>
+          <span
+            className={`font-bold flex items-center gap-1 ${
+              mockMode ? "text-[#b58900]" : theme.textHeading
+            }`}
+          >
             <FlaskConical className="w-3.5 h-3.5" /> Chế độ test
           </span>
         </label>
       </div>
 
-      {/* Chọn weight để chạy + weight đang xem kết quả */}
-      <div className={`${theme.bgCard} border ${theme.border} rounded-lg p-4 mb-4 font-sans transition-colors`}>
+      <div
+        className={`${theme.bgCard} border-2 ${theme.border} p-4 mb-4`}
+      >
         <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-          <span className={`text-xs uppercase tracking-wider ${theme.textSub} flex items-center gap-1.5`}>
+          <span
+            className={`text-xs uppercase tracking-wider ${theme.textSub} flex items-center gap-1.5`}
+          >
             <Database className="w-3.5 h-3.5 text-[#6c71c4]" /> Weight
           </span>
-          <button onClick={loadWeights} className={`text-[11px] px-2 py-1 rounded-lg border ${theme.border} ${theme.btnCancel} flex items-center gap-1`}>
+
+          <button
+            onClick={loadWeights}
+            className={`text-[11px] px-2 py-1 border-2 ${theme.border} ${theme.btnCancel} flex items-center gap-1`}
+          >
             <RefreshCw className="w-3 h-3" /> Làm mới
           </button>
         </div>
-        {weightsError && <p className="text-[11px] text-[#dc322f] mb-2">{weightsError}</p>}
+
+        {weightsError && (
+          <p className="text-[11px] text-[#dc322f] mb-2">{weightsError}</p>
+        )}
+
         <div className="flex flex-wrap gap-2">
           {availableWeights.map((w) => (
             <label
               key={w.id}
-              className={`text-xs px-2.5 py-1.5 rounded-lg border cursor-pointer flex items-center gap-1.5 transition-colors ${theme.border} ${
-                selectedWeightIds.includes(w.id) ? `${theme.bgMain} font-bold ${theme.textHeading}` : `${theme.inputBg} ${theme.textSub}`
+              className={`text-xs px-2.5 py-1.5 border-2 cursor-pointer flex items-center gap-1.5 transition-colors ${
+                theme.border
+              } ${
+                selectedWeightIds.includes(w.id)
+                  ? `${theme.bgMain} font-bold ${theme.textHeading}`
+                  : `${theme.inputBg} ${theme.textSub}`
               } ${!w.ready ? "opacity-50" : ""}`}
             >
               <input
@@ -1098,10 +1358,18 @@ function DashboardView({
             </label>
           ))}
         </div>
+
         <WeightResultTabs
           weights={availableWeights}
           resultsByWeight={Object.fromEntries(
-            batchItems.flatMap((it) => (it.resultsByWeight ? Object.keys(it.resultsByWeight).map((k) => [k, it.resultsByWeight![k]]) : []))
+            batchItems.flatMap((it) =>
+              it.resultsByWeight
+                ? Object.keys(it.resultsByWeight).map((k) => [
+                    k,
+                    it.resultsByWeight![k],
+                  ])
+                : []
+            )
           )}
           activeWeightId={activeWeightId}
           onSelect={setActiveWeightId}
@@ -1109,49 +1377,103 @@ function DashboardView({
         />
       </div>
 
-      {/* Hàng KPI — tổng hợp theo weight đang xem */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-4">
-        <MetricBox label="Tổng video" value={String(batchItems.length)} theme={theme} />
-        <MetricBox label="Gắn nhãn AI" value={doneItems.length ? `${Math.round((aiCount / doneItems.length) * 100)}%` : "—"} theme={theme} />
         <MetricBox
-          label="Gắn nhãn Real"
-          value={doneItems.length ? `${Math.round(((doneItems.length - aiCount) / doneItems.length) * 100)}%` : "—"}
+          label="Tổng video"
+          value={String(batchItems.length)}
           theme={theme}
         />
-        <MetricBox label="Accuracy (CSV)" value={metrics && metrics.n > 0 ? `${(metrics.accuracy * 100).toFixed(1)}%` : "N/A"} theme={theme} />
-        <MetricBox label="Đang xử lý / lỗi" value={`${queueCount} / ${errorCount}`} theme={theme} />
+        <MetricBox
+          label="Gắn nhãn AI"
+          value={
+            doneItems.length
+              ? `${Math.round((aiCount / doneItems.length) * 100)}%`
+              : "—"
+          }
+          theme={theme}
+        />
+        <MetricBox
+          label="Gắn nhãn Real"
+          value={
+            doneItems.length
+              ? `${Math.round(
+                  ((doneItems.length - aiCount) / doneItems.length) * 100
+                )}%`
+              : "—"
+          }
+          theme={theme}
+        />
+        <MetricBox
+          label="Accuracy (CSV)"
+          value={
+            metrics && metrics.n > 0
+              ? `${(metrics.accuracy * 100).toFixed(1)}%`
+              : "N/A"
+          }
+          theme={theme}
+        />
+        <MetricBox
+          label="Đang xử lý / lỗi"
+          value={`${queueCount} / ${errorCount}`}
+          theme={theme}
+        />
       </div>
 
-      {/* Toolbar: thêm video/URL, nhãn CSV, xuất CSV, chạy tất cả */}
-      <div className={`${theme.bgCard} border ${theme.border} rounded-lg p-3 mb-2 flex flex-wrap items-center gap-2 font-sans transition-colors`}>
-        <label className={`text-xs px-3 py-2 rounded-lg border ${theme.border} ${theme.btnCancel} cursor-pointer flex items-center gap-1.5`}>
+      <div
+        className={`${theme.bgCard} border-2 ${theme.border} p-3 mb-2 flex flex-wrap items-center gap-2`}
+      >
+        <label
+          className={`text-xs px-3 py-2 border-2 ${theme.border} ${theme.btnCancel} cursor-pointer flex items-center gap-1.5`}
+        >
           <Upload className="w-3.5 h-3.5" /> Thêm video
-          <input type="file" accept="video/*" multiple className="hidden" onChange={handleBatchFilesSelected} />
+          <input
+            type="file"
+            accept="video/*"
+            multiple
+            className="hidden"
+            onChange={handleBatchFilesSelected}
+          />
         </label>
+
         <button
           onClick={() => setShowBatchUrlBox((v) => !v)}
-          className={`text-xs px-3 py-2 rounded-lg border ${theme.border} ${theme.btnCancel} flex items-center gap-1.5`}
+          className={`text-xs px-3 py-2 border-2 ${theme.border} ${theme.btnCancel} flex items-center gap-1.5`}
         >
           <Link2 className="w-3.5 h-3.5" /> Thêm từ URL
         </button>
-        <label className={`text-xs px-3 py-2 rounded-lg border ${theme.border} ${theme.btnCancel} cursor-pointer flex items-center gap-1.5`}>
+
+        <label
+          className={`text-xs px-3 py-2 border-2 ${theme.border} ${theme.btnCancel} cursor-pointer flex items-center gap-1.5`}
+        >
           <FileSpreadsheet className="w-3.5 h-3.5" /> Nhãn CSV
-          <input type="file" accept=".csv,text/csv" className="hidden" onChange={handleCsvFileSelected} />
+          <input
+            type="file"
+            accept=".csv,text/csv"
+            className="hidden"
+            onChange={handleCsvFileSelected}
+          />
         </label>
+
         <button
           onClick={() => downloadResultsCsv(batchItems, labelMap, threshold)}
-          className={`text-xs px-3 py-2 rounded-lg border ${theme.border} ${theme.btnCancel} flex items-center gap-1.5`}
+          className={`text-xs px-3 py-2 border-2 ${theme.border} ${theme.btnCancel} flex items-center gap-1.5`}
         >
           <Download className="w-3.5 h-3.5" /> Xuất CSV
         </button>
+
         <button
           onClick={runAllBatch}
           disabled={isBatchRunning || selectedWeightIds.length === 0}
-          className="ml-auto text-xs font-bold px-4 py-2 rounded-lg bg-[#859900] hover:brightness-110 text-[#002b36] disabled:opacity-50 flex items-center gap-1.5"
+          className="ml-auto text-xs font-bold px-4 py-2 border-2 bg-[#859900] hover:brightness-110 text-[#002b36] disabled:opacity-50 flex items-center gap-1.5"
         >
-          {isBatchRunning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Cpu className="w-3.5 h-3.5" />}
+          {isBatchRunning ? (
+            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <Cpu className="w-3.5 h-3.5" />
+          )}
           Chạy tất cả
         </button>
+
         {csvInfo && (
           <span className={`text-[11px] ${theme.textSub} w-full`}>
             Nhãn: {csvInfo.fileName} · {csvInfo.totalRows} dòng
@@ -1160,22 +1482,29 @@ function DashboardView({
       </div>
 
       {showBatchUrlBox && (
-        <div className={`mb-4 p-3 rounded-lg border ${theme.border} ${theme.bgMain} font-sans`}>
+        <div
+          className={`mb-4 p-3 border-2 ${theme.border} ${theme.bgMain}`}
+        >
           <textarea
             value={batchUrlText}
             onChange={(e) => setBatchUrlText(e.target.value)}
             placeholder="Dán link YouTube / TikTok / Facebook..., mỗi dòng 1 link"
             rows={3}
-            className={`w-full px-3 py-2 rounded-lg border ${theme.border} ${theme.inputBg} ${theme.textHeading} text-xs font-sans outline-none focus:border-[#859900] mb-2`}
+            className={`w-full px-3 py-2 border-2 ${theme.border} ${theme.inputBg} ${theme.textHeading} text-xs outline-none focus:border-[#859900] mb-2`}
           />
+
           <div className="flex justify-end gap-2">
-            <button onClick={() => setShowBatchUrlBox(false)} className={`text-xs px-3 py-1.5 rounded-lg border ${theme.border} ${theme.btnCancel}`}>
+            <button
+              onClick={() => setShowBatchUrlBox(false)}
+              className={`text-xs px-3 py-1.5 border-2 ${theme.border} ${theme.btnCancel}`}
+            >
               Hủy
             </button>
+
             <button
               onClick={handleAddBatchUrls}
               disabled={!batchUrlText.trim()}
-              className="text-xs font-bold px-3 py-1.5 rounded-lg bg-[#859900] hover:brightness-110 text-[#002b36] disabled:opacity-50"
+              className="text-xs font-bold px-3 py-1.5 border-2 bg-[#859900] hover:brightness-110 text-[#002b36] disabled:opacity-50"
             >
               Thêm vào danh sách
             </button>
@@ -1183,19 +1512,19 @@ function DashboardView({
         </div>
       )}
 
-      {/* Bộ lọc + tìm kiếm bảng */}
-      <div className="flex flex-wrap items-center gap-2 mb-2 font-sans">
+      <div className="flex flex-wrap items-center gap-2 mb-2">
         <input
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Tìm tên hoặc URL video..."
-          className={`flex-1 min-w-[200px] text-xs px-3 py-2 rounded-lg border ${theme.border} ${theme.inputBg} ${theme.textHeading} outline-none focus:border-[#859900]`}
+          className={`flex-1 min-w-[200px] text-xs px-3 py-2 border-2 ${theme.border} ${theme.inputBg} ${theme.textHeading} outline-none focus:border-[#859900]`}
         />
+
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as any)}
-          className={`text-xs px-2 py-2 rounded-lg border ${theme.border} ${theme.inputBg} ${theme.textHeading}`}
+          className={`text-xs px-2 py-2 border-2 ${theme.border} ${theme.inputBg} ${theme.textHeading}`}
         >
           <option value="all">Tất cả trạng thái</option>
           <option value="queued">Chờ</option>
@@ -1203,10 +1532,11 @@ function DashboardView({
           <option value="done">Xong</option>
           <option value="error">Lỗi</option>
         </select>
+
         <select
           value={labelFilter}
           onChange={(e) => setLabelFilter(e.target.value as any)}
-          className={`text-xs px-2 py-2 rounded-lg border ${theme.border} ${theme.inputBg} ${theme.textHeading}`}
+          className={`text-xs px-2 py-2 border-2 ${theme.border} ${theme.inputBg} ${theme.textHeading}`}
         >
           <option value="all">Tất cả nhãn</option>
           <option value="ai">Dự đoán AI</option>
@@ -1215,34 +1545,74 @@ function DashboardView({
         </select>
       </div>
 
-      {/* Bảng dữ liệu — cuộn trong khung cố định, header dính */}
-      <div className={`${theme.bgCard} border ${theme.border} rounded-lg overflow-hidden font-sans transition-colors`}>
+      <div
+        className={`${theme.bgCard} border-2 ${theme.border} overflow-hidden`}
+      >
         <div className="overflow-y-auto" style={{ maxHeight: 520 }}>
           <table className="w-full text-xs">
             <thead className={`sticky top-0 ${theme.bgMain} z-10`}>
               <tr>
-                <th className={`text-left px-4 py-2 ${theme.textSub} font-normal`}>Video / URL</th>
-                <th className={`text-left px-2 py-2 ${theme.textSub} font-normal`}>Trạng thái</th>
-                <th className={`text-left px-2 py-2 ${theme.textSub} font-normal`}>Dự đoán</th>
-                <th className={`text-left px-2 py-2 ${theme.textSub} font-normal`}>Xác suất</th>
-                <th className={`text-left px-2 py-2 ${theme.textSub} font-normal`}>Nhãn thật</th>
+                <th
+                  className={`text-left px-4 py-2 ${theme.textSub} font-semibold uppercase tracking-wide`}
+                >
+                  Video / URL
+                </th>
+                <th
+                  className={`text-left px-2 py-2 ${theme.textSub} font-semibold uppercase tracking-wide`}
+                >
+                  Trạng thái
+                </th>
+                <th
+                  className={`text-left px-2 py-2 ${theme.textSub} font-semibold uppercase tracking-wide`}
+                >
+                  Dự đoán
+                </th>
+                <th
+                  className={`text-left px-2 py-2 ${theme.textSub} font-semibold uppercase tracking-wide`}
+                >
+                  Xác suất
+                </th>
+                <th
+                  className={`text-left px-2 py-2 ${theme.textSub} font-semibold uppercase tracking-wide`}
+                >
+                  Nhãn thật
+                </th>
                 <th className="px-4 py-2"></th>
               </tr>
             </thead>
+
             <tbody>
               {filteredItems.length === 0 && (
                 <tr>
-                  <td colSpan={6} className={`px-4 py-8 text-center ${theme.textSub}`}>
-                    Chưa có video nào khớp bộ lọc. Thêm video hoặc URL ở thanh công cụ phía trên.
+                  <td
+                    colSpan={6}
+                    className={`px-4 py-8 text-center ${theme.textSub}`}
+                  >
+                    Chưa có video nào khớp bộ lọc. Thêm video hoặc URL ở thanh
+                    công cụ phía trên.
                   </td>
                 </tr>
               )}
+
               {filteredItems.map((it) => {
-                const entry = activeWeightId ? it.resultsByWeight?.[activeWeightId] : undefined;
-                const classified = entry && !entry.error ? classifyWithThreshold(entry.result, threshold) : null;
+                const entry = activeWeightId
+                  ? it.resultsByWeight?.[activeWeightId]
+                  : undefined;
+
+                const classified =
+                  entry && !entry.error
+                    ? classifyWithThreshold(entry.result, threshold)
+                    : null;
+
                 const truth = labelMap.get(it.name);
-                const truthLabel = truth === undefined ? "—" : truth === 1 ? "AI" : "Real";
-                const isMismatch = classified && truth !== undefined && (classified.isSynthetic ? 1 : 0) !== truth;
+                const truthLabel =
+                  truth === undefined ? "—" : truth === 1 ? "AI" : "Real";
+
+                const isMismatch =
+                  classified &&
+                  truth !== undefined &&
+                  (classified.isSynthetic ? 1 : 0) !== truth;
+
                 return (
                   <tr
                     key={it.id}
@@ -1251,10 +1621,19 @@ function DashboardView({
                       selectedBatchId === it.id ? `${theme.bgMain}` : ""
                     }`}
                   >
-                    <td className={`px-4 py-2 max-w-[280px] ${theme.textHeading} flex items-center gap-2`}>
-                      <div className={`w-11 h-7 rounded shrink-0 overflow-hidden ${theme.bgMain} flex items-center justify-center`}>
+                    <td
+                      className={`px-4 py-2 max-w-[280px] ${theme.textHeading} flex items-center gap-2`}
+                    >
+                      <div
+                        className={`w-11 h-7 shrink-0 overflow-hidden ${theme.bgMain} border ${theme.border} flex items-center justify-center`}
+                      >
                         {it.previewUrl ? (
-                          <video src={it.previewUrl} muted preload="metadata" className="w-full h-full object-cover pointer-events-none" />
+                          <video
+                            src={it.previewUrl}
+                            muted
+                            preload="metadata"
+                            className="w-full h-full object-cover pointer-events-none"
+                          />
                         ) : it.sourceUrl ? (
                           <Link2 className="w-3.5 h-3.5 text-[#93a1a1]" />
                         ) : (
@@ -1263,43 +1642,76 @@ function DashboardView({
                       </div>
                       <span className="truncate">{it.name}</span>
                     </td>
+
                     <td className="px-2 py-2">
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full border ${statusStyle[it.status]}`}>{statusLabel[it.status]}</span>
+                      <span
+                        className={`text-[10px] px-2 py-0.5 border-2 ${statusStyle[it.status]}`}
+                      >
+                        {statusLabel[it.status]}
+                      </span>
                     </td>
+
                     <td className="px-2 py-2">
                       {classified ? (
-                        <span className={`font-bold ${classified.isSynthetic ? "text-[#dc322f]" : "text-[#859900]"}`}>
+                        <span
+                          className={`font-bold ${
+                            classified.isSynthetic
+                              ? "text-[#dc322f]"
+                              : "text-[#859900]"
+                          }`}
+                        >
                           {classified.isSynthetic ? "AI" : "Real"}
                         </span>
                       ) : (
                         <span className={theme.textSub}>—</span>
                       )}
                     </td>
+
                     <td className="px-2 py-2">
                       {classified ? (
                         <div className="flex items-center gap-1.5">
-                          <div className={`w-12 h-1.5 rounded-full ${theme.bgMain} overflow-hidden`}>
+                          <div
+                            className={`w-12 h-1.5 border ${theme.border} ${theme.bgMain} overflow-hidden`}
+                          >
                             <div
-                              className={classified.isSynthetic ? "bg-[#dc322f] h-full" : "bg-[#859900] h-full"}
-                              style={{ width: `${classified.probability_ai * 100}%` }}
+                              className={
+                                classified.isSynthetic
+                                  ? "bg-[#dc322f] h-full"
+                                  : "bg-[#859900] h-full"
+                              }
+                              style={{
+                                width: `${classified.probability_ai * 100}%`,
+                              }}
                             />
                           </div>
-                          <span className={theme.textSub}>{(classified.probability_ai * 100).toFixed(0)}%</span>
+                          <span className={theme.textSub}>
+                            {(classified.probability_ai * 100).toFixed(0)}%
+                          </span>
                         </div>
                       ) : (
                         <span className={theme.textSub}>—</span>
                       )}
                     </td>
+
                     <td className="px-2 py-2">
-                      <span className={isMismatch ? "text-[#dc322f] font-bold" : theme.textSub}>{truthLabel}</span>
+                      <span
+                        className={
+                          isMismatch
+                            ? "text-[#dc322f] font-bold"
+                            : theme.textSub
+                        }
+                      >
+                        {truthLabel}
+                      </span>
                     </td>
+
                     <td className="px-4 py-2 text-right">
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
                           removeBatchItem(it.id);
                         }}
-                        className={`p-1 rounded hover:opacity-70 ${theme.textSub}`}
+                        className={`p-1 hover:opacity-70 ${theme.textSub}`}
                       >
                         <X className="w-3.5 h-3.5" />
                       </button>
@@ -1312,26 +1724,34 @@ function DashboardView({
         </div>
       </div>
 
-      {/* Panel chi tiết trượt từ bên phải — mở khi bấm 1 dòng, có video/link + biểu đồ */}
       {selectedBatchItem && (
         <>
           <div
             className="fixed inset-0 bg-black/40 z-40"
             onClick={() => setSelectedBatchId(null)}
           />
+
           <div
-            className={`fixed top-0 right-0 h-full w-full max-w-xl ${theme.bgCard} border-l ${theme.border} z-50 overflow-y-auto p-6 font-sans transition-colors`}
+            className={`fixed top-0 right-0 h-full w-full max-w-xl ${theme.bgCard} border-l-2 ${theme.border} z-50 overflow-y-auto p-6`}
           >
             <div className="flex items-center justify-between mb-4">
-              <h2 className={`text-sm font-normal ${theme.textHeading} uppercase tracking-wider truncate ${notoSerif.className} italic`}>
+              <h2
+                className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider truncate`}
+              >
                 {selectedBatchItem.name}
               </h2>
-              <button onClick={() => setSelectedBatchId(null)} className={`p-1.5 rounded-lg hover:opacity-70 ${theme.textSub} shrink-0 ml-2`}>
+
+              <button
+                onClick={() => setSelectedBatchId(null)}
+                className={`p-1.5 hover:opacity-70 ${theme.textSub} shrink-0 ml-2`}
+              >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className={`relative aspect-video ${theme.bgMain} rounded-lg overflow-hidden border ${theme.border} flex items-center justify-center mb-4`}>
+            <div
+              className={`relative aspect-video ${theme.bgMain} border-2 ${theme.border} overflow-hidden flex items-center justify-center mb-4`}
+            >
               {selectedBatchItem.previewUrl ? (
                 <video
                   key={selectedBatchItem.id}
@@ -1346,7 +1766,12 @@ function DashboardView({
                 <div className="flex flex-col items-center gap-2 text-center px-6">
                   <Link2 className={`w-8 h-8 ${theme.textSub}`} />
                   {selectedBatchItem.sourceUrl && (
-                    <a href={selectedBatchItem.sourceUrl} target="_blank" rel="noreferrer" className="text-xs text-[#268bd2] hover:underline break-all">
+                    <a
+                      href={selectedBatchItem.sourceUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs text-[#268bd2] hover:underline break-all"
+                    >
                       {selectedBatchItem.sourceUrl}
                     </a>
                   )}
@@ -1355,7 +1780,9 @@ function DashboardView({
             </div>
 
             {selectedBatchItem.status === "error" && (
-              <p className="text-xs text-[#dc322f] mb-4">{selectedBatchItem.error}</p>
+              <p className="text-xs text-[#dc322f] mb-4">
+                {selectedBatchItem.error}
+              </p>
             )}
 
             {selectedBatchItem.resultsByWeight && (
@@ -1370,10 +1797,18 @@ function DashboardView({
 
             {activeBatchEntry && !activeBatchEntry.error && (
               <>
-                <ResultSummary result={activeBatchEntry.result} theme={theme} threshold={threshold} />
+                <ResultSummary
+                  result={activeBatchEntry.result}
+                  theme={theme}
+                  threshold={threshold}
+                />
+
                 {activeBatchEntry.scores.length > 0 && (
                   <div className="mt-4">
-                    <p className={`text-xs ${theme.textMain} mb-2`}>Bấm vào biểu đồ để tua video tới đúng thời điểm đó.</p>
+                    <p className={`text-xs ${theme.textMain} mb-2`}>
+                      Bấm vào biểu đồ để tua video tới đúng thời điểm đó.
+                    </p>
+
                     <ScoreChart
                       data={activeBatchEntry.scores}
                       currentTime={batchCurrentTime}
@@ -1386,9 +1821,17 @@ function DashboardView({
                 )}
               </>
             )}
-            {activeBatchEntry?.error && <p className="text-xs text-[#dc322f] mt-2">{activeBatchEntry.error}</p>}
+
+            {activeBatchEntry?.error && (
+              <p className="text-xs text-[#dc322f] mt-2">
+                {activeBatchEntry.error}
+              </p>
+            )}
+
             {selectedBatchItem.status === "done" && !activeWeightId && (
-              <p className={`text-xs ${theme.textSub} mt-2`}>Chọn 1 weight ở trên để xem kết quả chi tiết.</p>
+              <p className={`text-xs ${theme.textSub} mt-2`}>
+                Chọn 1 weight ở trên để xem kết quả chi tiết.
+              </p>
             )}
           </div>
         </>
@@ -1399,73 +1842,66 @@ function DashboardView({
 
 export default function SyntheticVideoDetector() {
   const [activeTab, setActiveTab] = useState<"single" | "batch">("single");
-  // Chế độ giao diện cấp cao nhất: "classic" = giao diện hiện tại (2 tab Single/
-  // Batch), "dashboard" = giao diện dashboard doanh nghiệp mới. Cả 2 dùng
-  // chung TOÀN BỘ state bên dưới (batchItems, threshold, weight đã chọn...)
-  // nên chuyển qua lại không mất dữ liệu đang có.
   const [appMode, setAppMode] = useState<"classic" | "dashboard">("classic");
+
   const [dashboardSearch, setDashboardSearch] = useState("");
-  const [dashboardStatusFilter, setDashboardStatusFilter] = useState<"all" | BatchStatus>("all");
-  const [dashboardLabelFilter, setDashboardLabelFilter] = useState<"all" | "ai" | "real" | "mismatch">("all");
+  const [dashboardStatusFilter, setDashboardStatusFilter] =
+    useState<"all" | BatchStatus>("all");
+  const [dashboardLabelFilter, setDashboardLabelFilter] = useState<
+    "all" | "ai" | "real" | "mismatch"
+  >("all");
+
   const [isDarkMode, setIsDarkMode] = useState(true);
-
-  // Ngưỡng phân loại — chỉnh được trực tiếp trên UI, áp dụng ngay lập tức
-  // cho toàn bộ kết quả ĐÃ CÓ (không cần chạy lại pipeline) vì ta luôn giữ
-  // nguyên probability_ai thô của từng video.
   const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD);
-
-  // Chế độ test bằng dữ liệu giả — bật lên để kiểm tra toàn bộ giao diện
-  // khi chưa truy cập được backend (Colab/Ngrok).
   const [mockMode, setMockMode] = useState(false);
 
-  // --- Danh sách weight (Google Drive) + lựa chọn của người dùng ---
-  // `availableWeights`: toàn bộ weight backend báo là đang có trên Drive.
-  // `selectedWeightIds`: các weight được TICK để CHẠY (checkbox).
-  // `activeWeightId`: weight đang được XEM kết quả (tab) — dùng chung cho
-  // cả 2 tab Video đơn / Xử lý hàng loạt như yêu cầu.
   const [availableWeights, setAvailableWeights] = useState<WeightInfo[]>([]);
   const [selectedWeightIds, setSelectedWeightIds] = useState<string[]>([]);
   const [activeWeightId, setActiveWeightId] = useState<string | null>(null);
   const [weightsError, setWeightsError] = useState<string | null>(null);
   const hasAutoSelectedRef = useRef(false);
 
-  // --- Single video tab state ---
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  // "file" = tải video lên trực tiếp (như cũ); "url" = dán link trang web
-  // (YouTube/TikTok/Facebook/...), backend tự tải bằng yt-dlp trước khi chạy.
-  const [singleSourceMode, setSingleSourceMode] = useState<"file" | "url">("file");
+  const [singleSourceMode, setSingleSourceMode] = useState<"file" | "url">(
+    "file"
+  );
   const [singleUrlInput, setSingleUrlInput] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [singleResultsByWeight, setSingleResultsByWeight] = useState<Record<string, WeightResult>>({});
+  const [singleResultsByWeight, setSingleResultsByWeight] = useState<
+    Record<string, WeightResult>
+  >({});
   const [currentTime, setCurrentTime] = useState(0);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  // --- Batch tab state ---
   const [batchItems, setBatchItems] = useState<BatchItem[]>([]);
   const [isBatchRunning, setIsBatchRunning] = useState(false);
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
   const [batchCurrentTime, setBatchCurrentTime] = useState(0);
   const batchVideoRef = useRef<HTMLVideoElement>(null);
   const batchUrlsRef = useRef<string[]>([]);
-  // Ô nhập nhiều URL cùng lúc (mỗi dòng 1 link) để thêm vào hàng loạt
+
   const [showBatchUrlBox, setShowBatchUrlBox] = useState(false);
   const [batchUrlText, setBatchUrlText] = useState("");
 
-  // Nhãn thật (ground truth) lấy từ file CSV: tên file -> 0 (Real) | 1 (AI)
   const [labelMap, setLabelMap] = useState<Map<string, number>>(new Map());
-  const [csvInfo, setCsvInfo] = useState<{ fileName: string; totalRows: number } | null>(null);
+  const [csvInfo, setCsvInfo] = useState<{
+    fileName: string;
+    totalRows: number;
+  } | null>(null);
 
-  // Lấy danh sách weight từ backend, poll định kỳ mỗi WEIGHTS_POLL_INTERVAL_MS
-  // — đây là cơ chế khiến weight mới thêm/ghi đè trên Google Drive tự xuất
-  // hiện/tự cập nhật trên UI mà không cần thao tác gì thêm.
   const loadWeights = useCallback(async () => {
     try {
-      const list = mockMode ? generateMockWeightsList() : await fetchAvailableWeights();
+      const list = mockMode
+        ? generateMockWeightsList()
+        : await fetchAvailableWeights();
+
       setAvailableWeights(list);
       setWeightsError(null);
     } catch (e: any) {
-      setWeightsError("Không lấy được danh sách weight từ backend. Kiểm tra lại URL Ngrok / Colab có đang chạy không.");
+      setWeightsError(
+        "Không lấy được danh sách weight từ backend. Kiểm tra lại URL Ngrok / Colab có đang chạy không."
+      );
     }
   }, [mockMode]);
 
@@ -1475,50 +1911,51 @@ export default function SyntheticVideoDetector() {
     return () => clearInterval(interval);
   }, [loadWeights]);
 
-  // Lần đầu có danh sách weight -> tự tick chọn hết (để chạy được ngay).
-  // Weight bị xoá khỏi Drive thì tự bỏ khỏi danh sách đã tick; weight MỚI
-  // xuất hiện sau lần đầu KHÔNG tự tick (tránh tự ý chạy thêm model ngoài ý
-  // muốn người dùng) — người dùng tick tay nếu muốn dùng weight mới đó.
   useEffect(() => {
     const availableIds = new Set(availableWeights.map((w) => w.id));
-    setSelectedWeightIds((prev) => prev.filter((id) => availableIds.has(id)));
+
+    setSelectedWeightIds((prev) =>
+      prev.filter((id) => availableIds.has(id))
+    );
+
     if (!hasAutoSelectedRef.current && availableWeights.length > 0) {
-      setSelectedWeightIds(availableWeights.filter((w) => w.ready).map((w) => w.id));
+      setSelectedWeightIds(
+        availableWeights.filter((w) => w.ready).map((w) => w.id)
+      );
       hasAutoSelectedRef.current = true;
     }
   }, [availableWeights]);
 
   const toggleWeightSelected = (id: string) => {
-    setSelectedWeightIds((prev) => (prev.includes(id) ? prev.filter((w) => w !== id) : [...prev, id]));
+    setSelectedWeightIds((prev) =>
+      prev.includes(id)
+        ? prev.filter((w) => w !== id)
+        : [...prev, id]
+    );
   };
 
-  // Tạo object URL đúng MỘT LẦN cho mỗi file, thay vì gọi
-  // URL.createObjectURL() ngay trong JSX — gọi trong JSX tạo ra một blob URL
-  // MỚI ở mỗi lần re-render (ví dụ mỗi lần onTimeUpdate chạy), khiến <video>
-  // nghĩ src đã đổi và tự nạp lại/dừng phát. Đây là lý do video bấm Play không chạy.
   useEffect(() => {
     if (!selectedFile) {
       setVideoUrl(null);
       return;
     }
+
     const url = URL.createObjectURL(selectedFile);
     setVideoUrl(url);
+
     return () => URL.revokeObjectURL(url);
   }, [selectedFile]);
 
-  // Giải phóng toàn bộ blob URL của danh sách hàng loạt khi component unmount
   useEffect(() => {
     return () => {
       batchUrlsRef.current.forEach((u) => URL.revokeObjectURL(u));
     };
   }, []);
 
-  // Đổi video đang chọn trong tab hàng loạt -> reset mốc thời gian
   useEffect(() => {
     setBatchCurrentTime(0);
   }, [selectedBatchId]);
 
-  // --- SOLARIZED THEME (WARM WHITE / DARK) ---
   const theme: Theme = {
     bgMain: isDarkMode ? "bg-[#002b36]" : "bg-[#fdf6e3]",
     bgCard: isDarkMode ? "bg-[#073642]" : "bg-[#eee8d5]",
@@ -1527,14 +1964,16 @@ export default function SyntheticVideoDetector() {
     textSub: isDarkMode ? "text-[#839496]" : "text-[#586e75]",
     border: isDarkMode ? "border-[#0a4a58]" : "border-[#d9d2b8]",
     inputBg: isDarkMode ? "bg-[#00212b]/60" : "bg-[#f5efdc]",
-    btnCancel: isDarkMode ? "bg-[#00212b] hover:bg-[#0a4a58] text-[#93a1a1]" : "bg-[#f5efdc] hover:bg-[#e3dcc4] text-[#586e75]",
+    btnCancel: isDarkMode
+      ? "bg-[#00212b] hover:bg-[#0a4a58] text-[#93a1a1]"
+      : "bg-[#f5efdc] hover:bg-[#e3dcc4] text-[#586e75]",
   };
 
   const tabBtn = (isActive: boolean) =>
-    `flex items-center gap-2 px-4 py-2.5 text-sm font-sans font-medium rounded-lg border transition-all ${
+    `flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-all ${
       isActive
-        ? `${theme.bgCard} ${theme.border} ${theme.textHeading}`
-        : `bg-transparent border-transparent ${theme.textSub} hover:${theme.bgCard}`
+        ? `border-[#268bd2] ${theme.textHeading} font-bold`
+        : `border-transparent ${theme.textSub} hover:opacity-80`
     }`;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1547,8 +1986,10 @@ export default function SyntheticVideoDetector() {
   const handleAnalyze = async () => {
     const isUrlMode = singleSourceMode === "url";
     const trimmedUrl = singleUrlInput.trim();
+
     if (isUrlMode ? !trimmedUrl : !selectedFile) return;
     if (selectedWeightIds.length === 0) return;
+
     setIsAnalyzing(true);
     setSingleResultsByWeight({});
     setCurrentTime(0);
@@ -1556,30 +1997,42 @@ export default function SyntheticVideoDetector() {
     try {
       const resultsMap = isUrlMode
         ? mockMode
-          ? await generateMockResultsForWeights(trimmedUrl, selectedWeightIds)
+          ? await generateMockResultsForWeights(
+              trimmedUrl,
+              selectedWeightIds
+            )
           : await analyzeVideoUrl(trimmedUrl, selectedWeightIds)
         : mockMode
-        ? await generateMockResultsForWeights(selectedFile!.name, selectedWeightIds)
+        ? await generateMockResultsForWeights(
+            selectedFile!.name,
+            selectedWeightIds
+          )
         : await analyzeVideoFile(selectedFile!, selectedWeightIds);
+
       setSingleResultsByWeight(resultsMap);
-      const firstOk = selectedWeightIds.find((id) => resultsMap[id] && !resultsMap[id].error) ?? selectedWeightIds[0];
+
+      const firstOk =
+        selectedWeightIds.find(
+          (id) => resultsMap[id] && !resultsMap[id].error
+        ) ?? selectedWeightIds[0];
+
       setActiveWeightId(firstOk ?? null);
     } catch (error) {
       console.error("API Upload Error:", error);
-      alert("Không thể kết nối tới model AI qua Ngrok. Vui lòng kiểm tra lại URL!");
+      alert(
+        "Không thể kết nối tới model AI qua Ngrok. Vui lòng kiểm tra lại URL!"
+      );
     } finally {
       setIsAnalyzing(false);
     }
   };
 
-  // Called continuously while the video plays, moves the red "Current Time" line
   const handleTimeUpdate = () => {
     if (videoRef.current) {
       setCurrentTime(videoRef.current.currentTime);
     }
   };
 
-  // Tua video tới đúng giây được bấm trên biểu đồ (giống demo NVIDIA)
   const handleSeek = (time: number) => {
     if (videoRef.current) {
       videoRef.current.currentTime = time;
@@ -1587,26 +2040,30 @@ export default function SyntheticVideoDetector() {
     }
   };
 
-  // ================= BATCH TAB HANDLERS =================
-
-  const handleBatchFilesSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleBatchFilesSelected = (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
     const files = e.target.files;
+
     if (!files || files.length === 0) return;
 
     const newItems: BatchItem[] = Array.from(files).map((file) => {
       const previewUrl = URL.createObjectURL(file);
       batchUrlsRef.current.push(previewUrl);
-      return { id: makeId(), name: file.name, file, previewUrl, status: "queued" as BatchStatus };
+
+      return {
+        id: makeId(),
+        name: file.name,
+        file,
+        previewUrl,
+        status: "queued" as BatchStatus,
+      };
     });
 
     setBatchItems((prev) => [...prev, ...newItems]);
-    // Cho phép chọn lại đúng file đó lần nữa sau này
     e.target.value = "";
   };
 
-  // Thêm nhiều video vào hàng loạt từ URL trang web (YouTube/TikTok/
-  // Facebook/...) — mỗi dòng trong ô nhập là 1 link, backend sẽ tự tải mỗi
-  // link xuống bằng yt-dlp khi tới lượt xử lý (không có preview trình duyệt).
   const handleAddBatchUrls = () => {
     const urls = Array.from(
       new Set(
@@ -1616,6 +2073,7 @@ export default function SyntheticVideoDetector() {
           .filter(Boolean)
       )
     );
+
     if (urls.length === 0) return;
 
     const newItems: BatchItem[] = urls.map((u) => ({
@@ -1630,21 +2088,28 @@ export default function SyntheticVideoDetector() {
     setShowBatchUrlBox(false);
   };
 
-  const handleCsvFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleCsvFileSelected = (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
     const file = e.target.files?.[0];
+
     if (!file) return;
 
     const reader = new FileReader();
+
     reader.onload = () => {
       const text = String(reader.result ?? "");
       const rows = parseCsv(text);
       const map = buildLabelMap(rows);
+
       setLabelMap(map);
       setCsvInfo({ fileName: file.name, totalRows: rows.length });
     };
+
     reader.onerror = () => {
       alert("Không đọc được file CSV này. Vui lòng kiểm tra lại định dạng.");
     };
+
     reader.readAsText(file);
     e.target.value = "";
   };
@@ -1661,58 +2126,80 @@ export default function SyntheticVideoDetector() {
 
   const clearBatch = () => {
     if (isBatchRunning) return;
+
     batchUrlsRef.current.forEach((u) => URL.revokeObjectURL(u));
     batchUrlsRef.current = [];
+
     setBatchItems([]);
     setSelectedBatchId(null);
   };
 
-  // Xử lý 1 video với TẤT CẢ weight đã chọn CÙNG LÚC (1 request), cập nhật
-  // đúng phần tử tương ứng trong danh sách. labelMap được truyền vào để chế
-  // độ mock "lái" điểm giả theo nhãn CSV thật (nếu có) cho ra kết quả giống
-  // một model thật hơn là random thuần.
-  // Xử lý 1 video (file hoặc URL, tuỳ item.file/item.sourceUrl có cái nào)
-  // với TẤT CẢ weight đã chọn CÙNG LÚC (1 request), cập nhật đúng phần tử
-  // tương ứng trong danh sách. labelMap được truyền vào để chế độ mock "lái"
-  // điểm giả theo nhãn CSV thật (nếu có) cho ra kết quả giống một model
-  // thật hơn là random thuần.
-  const processOneBatchItem = async (item: BatchItem, weightIds: string[]) => {
+  const processOneBatchItem = async (
+    item: BatchItem,
+    weightIds: string[]
+  ) => {
     const { id } = item;
-    setBatchItems((prev) => prev.map((it) => (it.id === id ? { ...it, status: "processing", error: undefined } : it)));
+
+    setBatchItems((prev) =>
+      prev.map((it) =>
+        it.id === id
+          ? { ...it, status: "processing", error: undefined }
+          : it
+      )
+    );
+
     setSelectedBatchId(id);
 
     try {
       const resultsMap = mockMode
-        ? await generateMockResultsForWeights(item.name, weightIds, labelMap.get(item.name))
+        ? await generateMockResultsForWeights(
+            item.name,
+            weightIds,
+            labelMap.get(item.name)
+          )
         : item.file
         ? await analyzeVideoFile(item.file, weightIds)
         : await analyzeVideoUrl(item.sourceUrl as string, weightIds);
+
       setBatchItems((prev) =>
-        prev.map((it) => (it.id === id ? { ...it, status: "done", resultsByWeight: resultsMap } : it))
+        prev.map((it) =>
+          it.id === id
+            ? { ...it, status: "done", resultsByWeight: resultsMap }
+            : it
+        )
       );
     } catch (err: any) {
       console.error("Batch upload error:", err);
+
       setBatchItems((prev) =>
         prev.map((it) =>
-          it.id === id ? { ...it, status: "error", error: err?.message ?? "Lỗi không xác định" } : it
+          it.id === id
+            ? {
+                ...it,
+                status: "error",
+                error: err?.message ?? "Lỗi không xác định",
+              }
+            : it
         )
       );
     }
   };
 
-  // Chạy lần lượt từng video một (không chạy song song) — video đứng trước
-  // xử lý xong mới tới video tiếp theo. Với MỖI video, tất cả weight đã tick
-  // được chạy CÙNG LÚC trong 1 request duy nhất.
   const runAllBatch = async () => {
     if (isBatchRunning || selectedWeightIds.length === 0) return;
-    const queue = batchItems.filter((it) => it.status === "queued" || it.status === "error");
+
+    const queue = batchItems.filter(
+      (it) => it.status === "queued" || it.status === "error"
+    );
+
     if (queue.length === 0) return;
 
     setIsBatchRunning(true);
+
     for (const item of queue) {
-      // eslint-disable-next-line no-await-in-loop
       await processOneBatchItem(item, selectedWeightIds);
     }
+
     setIsBatchRunning(false);
   };
 
@@ -1729,816 +2216,1162 @@ export default function SyntheticVideoDetector() {
     }
   };
 
-  const selectedBatchItem = batchItems.find((it) => it.id === selectedBatchId) || null;
+  const selectedBatchItem =
+    batchItems.find((it) => it.id === selectedBatchId) || null;
+
   const doneCount = batchItems.filter((it) => it.status === "done").length;
-  const pendingCount = batchItems.filter((it) => it.status === "queued" || it.status === "error").length;
+  const pendingCount = batchItems.filter(
+    (it) => it.status === "queued" || it.status === "error"
+  ).length;
+
   const matchedLabelCount = useMemo(
     () => batchItems.filter((it) => labelMap.has(it.name)).length,
     [batchItems, labelMap]
   );
+
   const metrics = useMemo(
     () => computeMetrics(batchItems, labelMap, threshold, activeWeightId),
     [batchItems, labelMap, threshold, activeWeightId]
   );
-  const activeWeightName = availableWeights.find((w) => w.id === activeWeightId)?.name ?? activeWeightId ?? "";
 
-  // Kết quả của weight đang xem, cho video đơn hiện tại
-  const activeSingleEntry = activeWeightId ? singleResultsByWeight[activeWeightId] : undefined;
-  const singleResult = activeSingleEntry && !activeSingleEntry.error ? activeSingleEntry.result : null;
+  const activeWeightName =
+    availableWeights.find((w) => w.id === activeWeightId)?.name ??
+    activeWeightId ??
+    "";
+
+  const activeSingleEntry = activeWeightId
+    ? singleResultsByWeight[activeWeightId]
+    : undefined;
+
+  const singleResult =
+    activeSingleEntry && !activeSingleEntry.error
+      ? activeSingleEntry.result
+      : null;
+
   const singleScores = activeSingleEntry?.scores ?? [];
 
-  // Kết quả của weight đang xem, cho video đang chọn trong tab hàng loạt
   const activeBatchEntry =
-    selectedBatchItem && activeWeightId ? selectedBatchItem.resultsByWeight?.[activeWeightId] : undefined;
+    selectedBatchItem && activeWeightId
+      ? selectedBatchItem.resultsByWeight?.[activeWeightId]
+      : undefined;
 
   return (
     <div
-      className={`min-h-screen ${theme.bgMain} ${theme.textMain} ${notoSerif.className} antialiased transition-colors duration-300`}
+      className={`integrity-ui min-h-screen ${theme.bgMain} ${theme.textMain} transition-colors duration-300`}
     >
-      {/* Header Section */}
-      <header className={`border-b ${theme.border} ${theme.bgMain}/90 backdrop-blur sticky top-0 z-50 transition-colors duration-300`}>
+      <style>{INTEGRITY_CSS}</style>
+
+      <header
+        className={`border-b-2 ${theme.border} ${theme.bgCard} sticky top-0 z-50 transition-colors duration-300`}
+      >
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className={`${theme.textHeading} font-bold text-lg tracking-wide transition-colors`}>
+            <span
+              className={`${theme.textHeading} font-bold text-lg tracking-wide`}
+            >
               [Tên dự án]
             </span>
           </div>
-          <div className="flex items-center gap-4 text-xs font-sans">
-            <div className={`flex items-center gap-1 p-1 rounded-full border ${theme.border} ${theme.bgCard}`}>
+
+          <div className="flex items-center gap-4 text-xs">
+            <div
+              className={`flex items-center gap-1 p-1 border-2 ${theme.border} ${theme.bgMain}`}
+            >
               <button
                 onClick={() => setAppMode("classic")}
-                className={`px-3 py-1 rounded-full transition-colors ${
-                  appMode === "classic" ? "bg-[#268bd2] text-white font-bold" : `${theme.textSub} hover:opacity-80`
+                className={`px-3 py-1 transition-colors ${
+                  appMode === "classic"
+                    ? "bg-[#268bd2] text-white font-bold"
+                    : `${theme.textSub} hover:opacity-80`
                 }`}
               >
                 Giao diện chuẩn
               </button>
+
               <button
                 onClick={() => setAppMode("dashboard")}
-                className={`px-3 py-1 rounded-full transition-colors flex items-center gap-1.5 ${
-                  appMode === "dashboard" ? "bg-[#268bd2] text-white font-bold" : `${theme.textSub} hover:opacity-80`
+                className={`px-3 py-1 transition-colors flex items-center gap-1.5 ${
+                  appMode === "dashboard"
+                    ? "bg-[#268bd2] text-white font-bold"
+                    : `${theme.textSub} hover:opacity-80`
                 }`}
               >
                 <Gauge className="w-3.5 h-3.5" /> Dashboard
               </button>
             </div>
+
             {mockMode ? (
-              <span className="flex items-center gap-1.5 text-[#b58900] bg-[#b58900]/10 px-3 py-1 rounded-full border border-[#b58900]/50">
+              <span className="flex items-center gap-1.5 text-[#b58900] bg-[#b58900]/10 px-3 py-1 border-2 border-[#b58900]/50">
                 <FlaskConical className="w-3.5 h-3.5" />
                 Chế độ test (dữ liệu giả)
               </span>
             ) : (
-              <span className={`flex items-center gap-1.5 text-[#859900] ${theme.bgCard} px-3 py-1 rounded-full border ${theme.border} transition-colors`}>
-                <span className="w-2 h-2 rounded-full bg-[#859900] animate-pulse"></span>
+              <span
+                className={`flex items-center gap-1.5 text-[#859900] ${theme.bgMain} px-3 py-1 border-2 ${theme.border}`}
+              >
+                <span className="w-2 h-2 bg-[#859900] animate-pulse"></span>
                 Đã kết nối
               </span>
             )}
+
             <button
               onClick={() => setIsDarkMode(!isDarkMode)}
-              className={`p-2 rounded-full ${theme.bgCard} border ${theme.border} hover:opacity-80 transition-all`}
+              className={`p-2 ${theme.bgMain} border-2 ${theme.border} hover:opacity-80 transition-all`}
             >
-              {isDarkMode ? <Sun className="w-4 h-4 text-[#b58900]" /> : <Moon className="w-4 h-4 text-[#6c71c4]" />}
+              {isDarkMode ? (
+                <Sun className="w-4 h-4 text-[#b58900]" />
+              ) : (
+                <Moon className="w-4 h-4 text-[#6c71c4]" />
+              )}
             </button>
           </div>
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="max-w-7xl mx-auto px-6 py-8">
-      {appMode === "classic" ? (
-        <>
-        {/* Title Section */}
-        <div className="mb-6">
-          <h1 className={`text-3xl font-normal italic ${theme.textHeading} mb-2 transition-colors`}>
-            Synthetic Video Detection
-          </h1>
-          <p className={`${theme.textSub} max-w-3xl text-sm transition-colors`}>
-            Tải lên một video để dự đoán video có phải được các model Diffusion tạo ra
-          </p>
-        </div>
-
-        {/* Bảng chỉ số đánh giá — đặt TRÊN thanh threshold để kéo thử ngưỡng
-            là thấy ngay số liệu đổi theo, không cần cuộn xuống lưới video.
-            Luôn tính theo weight đang được XEM (tab hiện tại). */}
-        {metrics && (
-          <div className={`${theme.bgCard} border ${theme.border} rounded-lg p-6 mb-6 transition-colors duration-300`}>
-            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-              <h2 className={`text-sm font-normal ${theme.textHeading} uppercase tracking-wider flex items-center gap-2 font-sans transition-colors`}>
-                <Gauge className="w-4 h-4 text-[#268bd2]" /> Chỉ số đánh giá
-              </h2>
-              <div className="flex items-center gap-3 font-sans">
-                <span className={`text-xs ${theme.textSub}`}>
-                  Weight: <span className={`font-bold ${theme.textHeading}`}>{activeWeightName}</span> · {metrics.n} video có nhãn CSV khớp tên file · threshold {(threshold * 100).toFixed(0)}%
-                </span>
-                <button
-                  onClick={() => downloadResultsCsv(batchItems, labelMap, threshold)}
-                  className={`text-xs px-3 py-1.5 rounded-lg border ${theme.border} ${theme.btnCancel} flex items-center gap-1.5 transition-colors shrink-0`}
-                >
-                  <Download className="w-3.5 h-3.5" /> Xuất CSV (tất cả weight)
-                </button>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-              <MetricBox label="AUROC" value={metrics.auroc != null ? metrics.auroc.toFixed(3) : "N/A"} theme={theme} />
-              <MetricBox label="Accuracy" value={`${(metrics.accuracy * 100).toFixed(1)}%`} theme={theme} />
-              <MetricBox label="Precision" value={metrics.precision != null ? `${(metrics.precision * 100).toFixed(1)}%` : "N/A"} theme={theme} />
-              <MetricBox label="Recall" value={metrics.recall != null ? `${(metrics.recall * 100).toFixed(1)}%` : "N/A"} theme={theme} />
-              <MetricBox label="F1-score" value={metrics.f1 != null ? `${(metrics.f1 * 100).toFixed(1)}%` : "N/A"} theme={theme} />
-            </div>
-            <p className={`text-[11px] ${theme.textSub} font-sans mt-3`}>
-              Ma trận nhầm lẫn: TP={metrics.tp} · FP={metrics.fp} · FN={metrics.fn} · TN={metrics.tn}
-            </p>
-            {(metrics.nPos === 0 || metrics.nNeg === 0) && (
-              <p className={`text-[11px] text-[#b58900] font-sans mt-1`}>
-                {metrics.nPos === 0
-                  ? "Tập nhãn khớp hiện không có video nào gắn nhãn AI (1) — nên Recall, F1 và AUROC hiển thị N/A vì không đủ dữ liệu để tính, không phải model làm sai."
-                  : "Tập nhãn khớp hiện không có video nào gắn nhãn Real (0) — nên AUROC hiển thị N/A vì không đủ dữ liệu để tính."}
-              </p>
-            )}
-            {metrics.precision === 0 && metrics.tp === 0 && metrics.fp > 0 && (
-              <p className={`text-[11px] text-[#dc322f] font-sans mt-1`}>
-                Precision 0% có nghĩa: trong {metrics.fp} video model đoán là "AI", không cái nào thật sự là AI theo CSV — thử kéo threshold cao hơn để giảm báo động giả.
-              </p>
-            )}
-          </div>
-        )}
-
-        {/* Bảng điều khiển chung: Threshold + Chế độ test — áp dụng cho cả 2 tab */}
-        <div className={`${theme.bgCard} border ${theme.border} rounded-lg p-4 mb-6 flex flex-wrap items-center gap-6 font-sans transition-colors duration-300`}>
-          <div className="flex items-center gap-3 flex-1 min-w-[280px]">
-            <SlidersHorizontal className="w-4 h-4 text-[#268bd2] shrink-0" />
-            <div className="flex-1">
-              <div className="flex justify-between text-xs mb-1">
-                <span className={theme.textSub}>Ngưỡng phân loại (threshold)</span>
-                <span className={`font-bold ${theme.textHeading}`}>{(threshold * 100).toFixed(0)}%</span>
-              </div>
-              <input
-                type="range"
-                min={0.01}
-                max={0.99}
-                step={0.01}
-                value={threshold}
-                onChange={(e) => setThreshold(Number(e.target.value))}
-                className="w-full accent-[#859900] cursor-pointer"
-              />
-              <p className={`text-[11px] ${theme.textSub} mt-1`}>
-                Video có xác suất AI lớn hơn {(threshold * 100).toFixed(0)}% sẽ bị coi là AI-generated. Chỉnh xong áp dụng ngay, không cần chạy lại pipeline.
-              </p>
-            </div>
-          </div>
-
-          <label className="flex items-start gap-2 cursor-pointer shrink-0 max-w-xs">
-            <input
-              type="checkbox"
-              checked={mockMode}
-              onChange={(e) => {
-                setMockMode(e.target.checked);
-                hasAutoSelectedRef.current = false; // đổi nguồn dữ liệu weight -> cho tự tick lại từ đầu
-              }}
-              className="accent-[#b58900] mt-0.5"
-            />
-            <span>
-              <span className={`text-xs font-bold flex items-center gap-1 ${mockMode ? "text-[#b58900]" : theme.textHeading}`}>
-                <FlaskConical className="w-3.5 h-3.5" /> Chế độ test (dữ liệu giả)
-              </span>
-              <span className={`text-[11px] ${theme.textSub} block mt-0.5`}>
-                Sinh kết quả giả để test giao diện, không cần gọi backend Ngrok/Colab.
-              </span>
-            </span>
-          </label>
-        </div>
-
-        {/* Bảng chọn WEIGHT để chạy — danh sách này tự đồng bộ với Google
-            Drive (poll backend mỗi vài giây), nên weight mới thêm/ghi đè
-            trên Drive tự xuất hiện ở đây. Tick nhiều weight rồi bấm "Chạy"
-            (ở tab Video đơn / Xử lý hàng loạt) sẽ chạy TẤT CẢ weight đã tick
-            cùng lúc cho video đó. */}
-        <div className={`${theme.bgCard} border ${theme.border} rounded-lg p-4 mb-6 font-sans transition-colors duration-300`}>
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-            <h2 className={`text-sm font-normal ${theme.textHeading} uppercase tracking-wider flex items-center gap-2 transition-colors`}>
-              <Database className="w-4 h-4 text-[#6c71c4]" /> Weight (Google Drive)
-            </h2>
-            <div className="flex items-center gap-3">
-              <span className={`text-[11px] ${theme.textSub}`}>
-                Đã chọn {selectedWeightIds.length}/{availableWeights.length} · tự làm mới mỗi {WEIGHTS_POLL_INTERVAL_MS / 1000}s
-              </span>
-              <button
-                onClick={loadWeights}
-                className={`text-xs px-3 py-1.5 rounded-lg border ${theme.border} ${theme.btnCancel} flex items-center gap-1.5 transition-colors`}
-              >
-                <RefreshCw className="w-3.5 h-3.5" /> Làm mới
-              </button>
-            </div>
-          </div>
-
-          {weightsError && (
-            <p className="text-[11px] text-[#dc322f] flex items-center gap-1.5 mb-2">
-              <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> {weightsError}
-            </p>
-          )}
-
-          {availableWeights.length === 0 && !weightsError ? (
-            <p className={`text-xs ${theme.textSub}`}>
-              Chưa tìm thấy weight nào. Kiểm tra lại thư mục WEIGHTS_ROOT trên Google Drive (mỗi weight là 1 thư mục con chứa best_model.pt + scaler.joblib).
-            </p>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-              {availableWeights.map((w) => (
-                <label
-                  key={w.id}
-                  className={`flex items-start gap-2 px-3 py-2 rounded-lg border ${theme.border} ${theme.inputBg} cursor-pointer transition-colors ${!w.ready ? "opacity-50" : ""}`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedWeightIds.includes(w.id)}
-                    onChange={() => toggleWeightSelected(w.id)}
-                    disabled={!w.ready}
-                    className="accent-[#859900] mt-0.5 shrink-0"
-                  />
-                  <span className="min-w-0">
-                    <span className={`text-xs font-medium block truncate ${theme.textHeading}`}>{w.name}</span>
-                    <span className={`text-[10px] block ${theme.textSub}`}>
-                      Cập nhật lúc {formatWeightTime(w.updated_at)}
-                    </span>
-                  </span>
-                </label>
-              ))}
-            </div>
-          )}
-
-          {selectedWeightIds.length === 0 && availableWeights.length > 0 && (
-            <p className="text-[11px] text-[#b58900] mt-2">Chọn ít nhất 1 weight để chạy.</p>
-          )}
-        </div>
-
-        {/* Tabs */}
-        <div className="flex items-center gap-2 mb-8 font-sans">
-          <button className={tabBtn(activeTab === "single")} onClick={() => setActiveTab("single")}>
-            <Film className="w-4 h-4" /> Video đơn
-          </button>
-          <button className={tabBtn(activeTab === "batch")} onClick={() => setActiveTab("batch")}>
-            <Layers className="w-4 h-4" /> Xử lý hàng loạt
-          </button>
-        </div>
-
-        {/* ================= SINGLE VIDEO TAB ================= */}
-        {activeTab === "single" && (
+        {appMode === "classic" ? (
           <>
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-              {/* Left Column: Input & Media Player */}
-              <div className="lg:col-span-7 space-y-6">
-                <div className={`${theme.bgCard} xl border ${theme.border} p-6 transition-colors duration-300`}>
-                  <div className="flex items-center justify-between mb-4">
-                    <h2 className={`text-sm font-normal ${theme.textHeading} uppercase tracking-wider flex items-center gap-2 font-sans transition-colors`}>
-                      <Play className="w-4 h-4 text-[#859900]" /> Video Input
-                    </h2>
-                    {singleSourceMode === "file" && selectedFile && (
-                      <span className={`text-xs ${theme.textSub} truncate max-w-[200px] font-sans`}>
-                        {selectedFile.name}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Chọn nguồn: tải file lên hay dán URL trang web (YouTube/TikTok/Facebook/...) */}
-                  <div className="flex items-center gap-2 mb-4 font-sans">
-                    <button
-                      onClick={() => setSingleSourceMode("file")}
-                      className={tabBtn(singleSourceMode === "file")}
-                    >
-                      <Upload className="w-3.5 h-3.5" /> Tải file
-                    </button>
-                    <button
-                      onClick={() => setSingleSourceMode("url")}
-                      className={tabBtn(singleSourceMode === "url")}
-                    >
-                      <Link2 className="w-3.5 h-3.5" /> Dán URL
-                    </button>
-                  </div>
-
-                  {singleSourceMode === "file" ? (
-                    !selectedFile ? (
-                      <label className={`border-2 border-dashed ${theme.border} hover:border-[#859900] ${theme.inputBg} rounded-lg p-12 flex flex-col items-center justify-center cursor-pointer transition-all group`}>
-                        <Upload className="w-12 h-12 text-[#93a1a1] group-hover:text-[#859900] mb-4 transition-colors" />
-                        <p className={`text-sm ${theme.textHeading} font-medium mb-1 font-sans transition-colors`}>
-                          Drag and drop video here or <span className="text-[#268bd2]">browse files</span>
-                        </p>
-                        <p className={`text-xs ${theme.textMain} font-sans transition-colors`}>Supports MP4, MOV, AVI (Max 100MB)</p>
-                        <input type="file" accept="video/*" className="hidden" onChange={handleFileChange} />
-                      </label>
-                    ) : (
-                      <div className="space-y-4">
-                        <div className={`relative aspect-video ${theme.bgMain} rounded-lg overflow-hidden border ${theme.border} flex items-center justify-center`}>
-                          {videoUrl && (
-                            <video
-                              ref={videoRef}
-                              src={videoUrl}
-                              controls
-                              onTimeUpdate={handleTimeUpdate}
-                              onSeeked={handleTimeUpdate}
-                              className="w-full h-full object-contain"
-                            />
-                          )}
-                        </div>
-
-                        <div className="flex gap-3 font-sans">
-                          <button
-                            onClick={handleAnalyze}
-                            disabled={isAnalyzing || selectedWeightIds.length === 0}
-                            className="flex-1 bg-[#859900] hover:brightness-110 text-[#002b36] font-bold py-3 px-6 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50"
-                          >
-                            {isAnalyzing ? (
-                              <>
-                                <RefreshCw className="w-5 h-5 animate-spin" /> Analyzing frames...
-                              </>
-                            ) : (
-                              <>
-                                <Cpu className="w-5 h-5" /> Chạy pipeline AI xử lí ({selectedWeightIds.length} weight)
-                              </>
-                            )}
-                          </button>
-
-                          <button
-                            onClick={() => {
-                              setSelectedFile(null);
-                              setSingleResultsByWeight({});
-                            }}
-                            className={`px-4 py-3 border ${theme.border} ${theme.btnCancel} rounded-lg text-sm font-medium transition-colors`}
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    )
-                  ) : (
-                    <div className="space-y-4">
-                      <input
-                        type="url"
-                        value={singleUrlInput}
-                        onChange={(e) => setSingleUrlInput(e.target.value)}
-                        placeholder="Dán link YouTube / TikTok / Facebook..."
-                        className={`w-full px-4 py-3 rounded-lg border ${theme.border} ${theme.inputBg} ${theme.textHeading} text-sm font-sans outline-none focus:border-[#859900] transition-colors`}
-                      />
-                      <div className={`aspect-video ${theme.bgMain} rounded-lg border ${theme.border} flex flex-col items-center justify-center gap-2 px-6 text-center`}>
-                        <Link2 className={`w-8 h-8 ${theme.textSub}`} />
-                        {singleUrlInput.trim() ? (
-                          <p className={`text-xs ${theme.textSub} font-sans break-all`}>{singleUrlInput.trim()}</p>
-                        ) : (
-                          <p className={`text-xs ${theme.textMain} font-sans`}>Video sẽ được backend tải trực tiếp từ link này (yt-dlp) rồi chạy pipeline — không xem trước được ở đây.</p>
-                        )}
-                      </div>
-
-                      <div className="flex gap-3 font-sans">
-                        <button
-                          onClick={handleAnalyze}
-                          disabled={isAnalyzing || selectedWeightIds.length === 0 || !singleUrlInput.trim()}
-                          className="flex-1 bg-[#859900] hover:brightness-110 text-[#002b36] font-bold py-3 px-6 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50"
-                        >
-                          {isAnalyzing ? (
-                            <>
-                              <RefreshCw className="w-5 h-5 animate-spin" /> Đang tải & phân tích...
-                            </>
-                          ) : (
-                            <>
-                              <Cpu className="w-5 h-5" /> Tải & chạy pipeline AI ({selectedWeightIds.length} weight)
-                            </>
-                          )}
-                        </button>
-
-                        <button
-                          onClick={() => {
-                            setSingleUrlInput("");
-                            setSingleResultsByWeight({});
-                          }}
-                          className={`px-4 py-3 border ${theme.border} ${theme.btnCancel} rounded-lg text-sm font-medium transition-colors`}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Right Column: Analysis Results */}
-              <div className="lg:col-span-5 space-y-6">
-                <div className={`${theme.bgCard} xl border ${theme.border} p-6 h-full flex flex-col justify-between transition-colors duration-300`}>
-                  <div>
-                    <h2 className={`text-sm font-normal ${theme.textHeading} uppercase tracking-wider mb-6 flex items-center gap-2 font-sans transition-colors`}>
-                      <BarChart2 className="w-4 h-4 text-[#268bd2]" /> Analysis Results
-                    </h2>
-
-                    {Object.keys(singleResultsByWeight).length > 0 && (
-                      <WeightResultTabs
-                        weights={availableWeights}
-                        resultsByWeight={singleResultsByWeight}
-                        activeWeightId={activeWeightId}
-                        onSelect={setActiveWeightId}
-                        theme={theme}
-                      />
-                    )}
-
-                    {Object.keys(singleResultsByWeight).length === 0 && !isAnalyzing && (
-                      <div className={`text-center py-16 ${theme.textMain}`}>
-                        <Cpu className="w-12 h-12 mx-auto mb-3 opacity-40" />
-                        <p className="text-sm font-sans">No data available. Please upload a video and run the model.</p>
-                      </div>
-                    )}
-
-                    {isAnalyzing && (
-                      <div className="space-y-6 py-8">
-                        <div className="animate-pulse space-y-3">
-                          <div className={`h-4 ${theme.bgMain} rounded w-3/4`}></div>
-                          <div className={`h-10 ${theme.bgMain} rounded`}></div>
-                          <div className={`h-20 ${theme.bgMain} rounded`}></div>
-                        </div>
-                        <p className="text-xs text-center text-[#268bd2] font-sans animate-pulse">
-                          Extracting Spatial & Temporal Features...
-                        </p>
-                      </div>
-                    )}
-
-                    {!isAnalyzing && activeSingleEntry?.error && (
-                      <div className="text-center py-16 text-[#dc322f]">
-                        <X className="w-12 h-12 mx-auto mb-3 opacity-60" />
-                        <p className="text-sm font-sans">Lỗi với weight này: {activeSingleEntry.error}</p>
-                      </div>
-                    )}
-
-                    {!isAnalyzing && singleResult && <ResultSummary result={singleResult} theme={theme} threshold={threshold} />}
-                  </div>
-                </div>
-              </div>
+            <div className="mb-6">
+              <h1
+                className={`text-3xl font-semibold ${theme.textHeading} mb-2`}
+              >
+                Synthetic Video Detection
+              </h1>
+              <p className={`${theme.textSub} max-w-3xl text-sm`}>
+                Tải lên một video để dự đoán video có phải được các model
+                Diffusion tạo ra.
+              </p>
             </div>
 
-            {/* Real-time Score Chart */}
-            {singleScores.length > 0 && !activeSingleEntry?.error && (
-              <div className={`${theme.bgCard} border ${theme.border} p-6 mt-8 transition-colors duration-300`}>
-                <p className={`text-sm ${theme.textSub} mb-4 font-sans transition-colors`}>
-                  Play the video to view real-time data below.
-                </p>
-                <h2 className={`text-sm font-normal ${theme.textHeading} uppercase tracking-wider mb-4 flex items-center gap-2 font-sans transition-colors`}>
-                  <BarChart2 className="w-4 h-4 text-[#268bd2]" /> Video Analysis
-                </h2>
-                <p className={`text-xs ${theme.textMain} mb-2 font-sans transition-colors`}>
-                  Bấm vào biểu đồ để tua video tới đúng thời điểm đó.
-                </p>
-                <ScoreChart
-                  data={singleScores}
-                  currentTime={currentTime}
-                  onSeek={handleSeek}
-                  isDarkMode={isDarkMode}
-                  threshold={threshold}
-                />
-              </div>
-            )}
-          </>
-        )}
+            {metrics && (
+              <div
+                className={`${theme.bgCard} border-2 ${theme.border} p-6 mb-6`}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                  <h2
+                    className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider flex items-center gap-2`}
+                  >
+                    <Gauge className="w-4 h-4 text-[#268bd2]" /> Chỉ số đánh
+                    giá
+                  </h2>
 
-        {/* ================= BATCH TAB ================= */}
-        {activeTab === "batch" && (
-          <div className="space-y-6">
-            {/* Upload + Controls */}
-            <div className={`${theme.bgCard} border ${theme.border} p-6 transition-colors duration-300`}>
-              <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
-                <h2 className={`text-sm font-normal ${theme.textHeading} uppercase tracking-wider flex items-center gap-2 font-sans transition-colors`}>
-                  <Layers className="w-4 h-4 text-[#859900]" /> Xử lý nhiều video
-                </h2>
-                <div className="flex flex-wrap items-center gap-3 font-sans">
-                  {batchItems.length > 0 && (
+                  <div className="flex items-center gap-3">
                     <span className={`text-xs ${theme.textSub}`}>
-                      {doneCount}/{batchItems.length} đã xong
+                      Weight:{" "}
+                      <span className={`font-bold ${theme.textHeading}`}>
+                        {activeWeightName}
+                      </span>{" "}
+                      · {metrics.n} video có nhãn CSV khớp tên file · threshold{" "}
+                      {(threshold * 100).toFixed(0)}%
                     </span>
-                  )}
-                  <label
-                    className={`text-xs px-3 py-2 rounded-lg border ${theme.border} ${theme.btnCancel} cursor-pointer flex items-center gap-2 transition-colors`}
-                  >
-                    <Upload className="w-3.5 h-3.5" /> Thêm video
-                    <input type="file" accept="video/*" multiple className="hidden" onChange={handleBatchFilesSelected} />
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => setShowBatchUrlBox((v) => !v)}
-                    className={`text-xs px-3 py-2 rounded-lg border ${theme.border} ${theme.btnCancel} cursor-pointer flex items-center gap-2 transition-colors`}
-                  >
-                    <Link2 className="w-3.5 h-3.5" /> Thêm từ URL
-                  </button>
-                  <label
-                    className={`text-xs px-3 py-2 rounded-lg border ${theme.border} ${theme.btnCancel} cursor-pointer flex items-center gap-2 transition-colors`}
-                  >
-                    <FileSpreadsheet className="w-3.5 h-3.5" /> Tải file nhãn CSV
-                    <input type="file" accept=".csv,text/csv" className="hidden" onChange={handleCsvFileSelected} />
-                  </label>
-                  <button
-                    onClick={runAllBatch}
-                    disabled={isBatchRunning || pendingCount === 0 || selectedWeightIds.length === 0}
-                    className="text-xs font-bold px-4 py-2 rounded-lg bg-[#859900] hover:brightness-110 text-[#002b36] flex items-center gap-2 transition-all disabled:opacity-50"
-                  >
-                    {isBatchRunning ? (
-                      <>
-                        <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Đang chạy...
-                      </>
-                    ) : (
-                      <>
-                        <Cpu className="w-3.5 h-3.5" /> Chạy tất cả ({pendingCount}) · {selectedWeightIds.length} weight
-                      </>
-                    )}
-                  </button>
-                  <button
-                    onClick={() => downloadResultsCsv(batchItems, labelMap, threshold)}
-                    disabled={doneCount === 0}
-                    className={`text-xs px-3 py-2 rounded-lg border ${theme.border} ${theme.btnCancel} flex items-center gap-2 transition-colors disabled:opacity-40`}
-                  >
-                    <Download className="w-3.5 h-3.5" /> Xuất CSV
-                  </button>
-                  <button
-                    onClick={clearBatch}
-                    disabled={isBatchRunning || batchItems.length === 0}
-                    className={`text-xs px-3 py-2 rounded-lg border ${theme.border} ${theme.btnCancel} flex items-center gap-2 transition-colors disabled:opacity-40`}
-                  >
-                    <Trash2 className="w-3.5 h-3.5" /> Xóa tất cả
-                  </button>
-                </div>
-              </div>
 
-              {/* Ô dán nhiều URL cùng lúc — mỗi dòng 1 link */}
-              {showBatchUrlBox && (
-                <div className={`mb-4 p-3 rounded-lg border ${theme.border} ${theme.bgMain} font-sans`}>
-                  <textarea
-                    value={batchUrlText}
-                    onChange={(e) => setBatchUrlText(e.target.value)}
-                    placeholder={"Dán link YouTube / TikTok / Facebook..., mỗi dòng 1 link"}
-                    rows={3}
-                    className={`w-full px-3 py-2 rounded-lg border ${theme.border} ${theme.inputBg} ${theme.textHeading} text-xs font-sans outline-none focus:border-[#859900] mb-2 transition-colors`}
-                  />
-                  <div className="flex justify-end gap-2">
                     <button
-                      onClick={() => {
-                        setShowBatchUrlBox(false);
-                        setBatchUrlText("");
-                      }}
-                      className={`text-xs px-3 py-1.5 rounded-lg border ${theme.border} ${theme.btnCancel} transition-colors`}
+                      onClick={() =>
+                        downloadResultsCsv(batchItems, labelMap, threshold)
+                      }
+                      className={`text-xs px-3 py-1.5 border-2 ${theme.border} ${theme.btnCancel} flex items-center gap-1.5`}
                     >
-                      Hủy
-                    </button>
-                    <button
-                      onClick={handleAddBatchUrls}
-                      disabled={!batchUrlText.trim()}
-                      className="text-xs font-bold px-3 py-1.5 rounded-lg bg-[#859900] hover:brightness-110 text-[#002b36] disabled:opacity-50 transition-all"
-                    >
-                      Thêm vào danh sách
+                      <Download className="w-3.5 h-3.5" /> Xuất CSV (tất cả
+                      weight)
                     </button>
                   </div>
                 </div>
-              )}
 
-              {/* Thông tin file CSV nhãn đang dùng */}
-              {csvInfo && (
-                <div className={`flex items-center justify-between mb-4 px-3 py-2 rounded-lg ${theme.bgMain} border ${theme.border} font-sans text-xs`}>
-                  <span className={theme.textSub}>
-                    <span className={`${theme.textHeading} font-medium`}>{csvInfo.fileName}</span> · {csvInfo.totalRows} dòng nhãn
-                    {batchItems.length > 0 && (
-                      <> · khớp {matchedLabelCount}/{batchItems.length} video đã tải</>
-                    )}
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                  <MetricBox
+                    label="AUROC"
+                    value={
+                      metrics.auroc != null ? metrics.auroc.toFixed(3) : "N/A"
+                    }
+                    theme={theme}
+                  />
+                  <MetricBox
+                    label="Accuracy"
+                    value={`${(metrics.accuracy * 100).toFixed(1)}%`}
+                    theme={theme}
+                  />
+                  <MetricBox
+                    label="Precision"
+                    value={
+                      metrics.precision != null
+                        ? `${(metrics.precision * 100).toFixed(1)}%`
+                        : "N/A"
+                    }
+                    theme={theme}
+                  />
+                  <MetricBox
+                    label="Recall"
+                    value={
+                      metrics.recall != null
+                        ? `${(metrics.recall * 100).toFixed(1)}%`
+                        : "N/A"
+                    }
+                    theme={theme}
+                  />
+                  <MetricBox
+                    label="F1-score"
+                    value={
+                      metrics.f1 != null
+                        ? `${(metrics.f1 * 100).toFixed(1)}%`
+                        : "N/A"
+                    }
+                    theme={theme}
+                  />
+                </div>
+
+                <p className={`text-[11px] ${theme.textSub} mt-3`}>
+                  Ma trận nhầm lẫn: TP={metrics.tp} · FP={metrics.fp} · FN=
+                  {metrics.fn} · TN={metrics.tn}
+                </p>
+
+                {(metrics.nPos === 0 || metrics.nNeg === 0) && (
+                  <p className={`text-[11px] text-[#b58900] mt-1`}>
+                    {metrics.nPos === 0
+                      ? "Tập nhãn khớp hiện không có video nào gắn nhãn AI (1) — nên Recall, F1 và AUROC hiển thị N/A vì không đủ dữ liệu để tính, không phải model làm sai."
+                      : "Tập nhãn khớp hiện không có video nào gắn nhãn Real (0) — nên AUROC hiển thị N/A vì không đủ dữ liệu để tính."}
+                  </p>
+                )}
+
+                {metrics.precision === 0 &&
+                  metrics.tp === 0 &&
+                  metrics.fp > 0 && (
+                    <p className={`text-[11px] text-[#dc322f] mt-1`}>
+                      Precision 0% có nghĩa: trong {metrics.fp} video model
+                      đoán là "AI", không cái nào thật sự là AI theo CSV — thử
+                      kéo threshold cao hơn để giảm báo động giả.
+                    </p>
+                  )}
+              </div>
+            )}
+
+            <div
+              className={`${theme.bgCard} border-2 ${theme.border} p-4 mb-6 flex flex-wrap items-center gap-6`}
+            >
+              <div className="flex items-center gap-3 flex-1 min-w-[280px]">
+                <SlidersHorizontal className="w-4 h-4 text-[#268bd2] shrink-0" />
+
+                <div className="flex-1">
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className={theme.textSub}>
+                      Ngưỡng phân loại (threshold)
+                    </span>
+                    <span className={`font-bold ${theme.textHeading}`}>
+                      {(threshold * 100).toFixed(0)}%
+                    </span>
+                  </div>
+
+                  <input
+                    type="range"
+                    min={0.01}
+                    max={0.99}
+                    step={0.01}
+                    value={threshold}
+                    onChange={(e) => setThreshold(Number(e.target.value))}
+                    className="w-full accent-[#859900] cursor-pointer"
+                  />
+
+                  <p className={`text-[11px] ${theme.textSub} mt-1`}>
+                    Video có xác suất AI lớn hơn {(threshold * 100).toFixed(0)}%
+                    sẽ bị coi là AI-generated. Chỉnh xong áp dụng ngay, không
+                    cần chạy lại pipeline.
+                  </p>
+                </div>
+              </div>
+
+              <label className="flex items-start gap-2 cursor-pointer shrink-0 max-w-xs">
+                <input
+                  type="checkbox"
+                  checked={mockMode}
+                  onChange={(e) => {
+                    setMockMode(e.target.checked);
+                    hasAutoSelectedRef.current = false;
+                  }}
+                  className="accent-[#b58900] mt-0.5"
+                />
+
+                <span>
+                  <span
+                    className={`text-xs font-bold flex items-center gap-1 ${
+                      mockMode ? "text-[#b58900]" : theme.textHeading
+                    }`}
+                  >
+                    <FlaskConical className="w-3.5 h-3.5" /> Chế độ test (dữ
+                    liệu giả)
                   </span>
-                  <button onClick={clearCsv} className="text-[#dc322f] hover:underline">
-                    Bỏ file CSV
+
+                  <span className={`text-[11px] ${theme.textSub} block mt-0.5`}>
+                    Sinh kết quả giả để test giao diện, không cần gọi backend
+                    Ngrok/Colab.
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            <div
+              className={`${theme.bgCard} border-2 ${theme.border} p-4 mb-6`}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                <h2
+                  className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider flex items-center gap-2`}
+                >
+                  <Database className="w-4 h-4 text-[#6c71c4]" /> Weight
+                  (Google Drive)
+                </h2>
+
+                <div className="flex items-center gap-3">
+                  <span className={`text-[11px] ${theme.textSub}`}>
+                    Đã chọn {selectedWeightIds.length}/
+                    {availableWeights.length} · tự làm mới mỗi{" "}
+                    {WEIGHTS_POLL_INTERVAL_MS / 1000}s
+                  </span>
+
+                  <button
+                    onClick={loadWeights}
+                    className={`text-xs px-3 py-1.5 border-2 ${theme.border} ${theme.btnCancel} flex items-center gap-1.5`}
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" /> Làm mới
                   </button>
                 </div>
+              </div>
+
+              {weightsError && (
+                <p className="text-[11px] text-[#dc322f] flex items-center gap-1.5 mb-2">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />{" "}
+                  {weightsError}
+                </p>
               )}
 
-              {batchItems.length === 0 ? (
-                <label
-                  className={`border-2 border-dashed ${theme.border} hover:border-[#859900] ${theme.inputBg} rounded-lg p-12 flex flex-col items-center justify-center cursor-pointer transition-all group`}
-                >
-                  <Upload className="w-12 h-12 text-[#93a1a1] group-hover:text-[#859900] mb-4 transition-colors" />
-                  <p className={`text-sm ${theme.textHeading} font-medium mb-1 font-sans transition-colors`}>
-                    Kéo thả nhiều video vào đây hoặc <span className="text-[#268bd2]">chọn nhiều file</span>
-                  </p>
-                  <p className={`text-xs ${theme.textMain} font-sans transition-colors`}>
-                    Sau khi tải lên, bấm "Chạy tất cả" để xử lý lần lượt từng video (mỗi video chạy hết các weight đã chọn cùng lúc)
-                  </p>
-                  <input type="file" accept="video/*" multiple className="hidden" onChange={handleBatchFilesSelected} />
-                </label>
+              {availableWeights.length === 0 && !weightsError ? (
+                <p className={`text-xs ${theme.textSub}`}>
+                  Chưa tìm thấy weight nào. Kiểm tra lại thư mục WEIGHTS_ROOT
+                  trên Google Drive (mỗi weight là 1 thư mục con chứa
+                  best_model.pt + scaler.joblib).
+                </p>
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-3">
-                  {batchItems.map((item) => (
-                    <BatchGridCard
-                      key={item.id}
-                      item={item}
-                      groundTruth={labelMap.get(item.name)}
-                      threshold={threshold}
-                      activeWeightId={activeWeightId}
-                      isSelected={selectedBatchId === item.id}
-                      onSelect={() => setSelectedBatchId(item.id)}
-                      onRemove={() => removeBatchItem(item.id)}
-                      disableRemove={item.status === "processing"}
-                    />
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                  {availableWeights.map((w) => (
+                    <label
+                      key={w.id}
+                      className={`flex items-start gap-2 px-3 py-2 border-2 ${theme.border} ${theme.inputBg} cursor-pointer transition-colors ${
+                        !w.ready ? "opacity-50" : ""
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedWeightIds.includes(w.id)}
+                        onChange={() => toggleWeightSelected(w.id)}
+                        disabled={!w.ready}
+                        className="accent-[#859900] mt-0.5 shrink-0"
+                      />
+
+                      <span className="min-w-0">
+                        <span
+                          className={`text-xs font-medium block truncate ${theme.textHeading}`}
+                        >
+                          {w.name}
+                        </span>
+
+                        <span
+                          className={`text-[10px] block ${theme.textSub}`}
+                        >
+                          Cập nhật lúc {formatWeightTime(w.updated_at)}
+                        </span>
+                      </span>
+                    </label>
                   ))}
                 </div>
               )}
+
+              {selectedWeightIds.length === 0 &&
+                availableWeights.length > 0 && (
+                  <p className="text-[11px] text-[#b58900] mt-2">
+                    Chọn ít nhất 1 weight để chạy.
+                  </p>
+                )}
             </div>
 
-            {/* Chi tiết video đang chọn */}
-            {selectedBatchItem ? (
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                <div className="lg:col-span-7 space-y-6">
-                  <div className={`${theme.bgCard} border ${theme.border} p-6 transition-colors duration-300`}>
-                    <h2 className={`text-sm font-normal ${theme.textHeading} uppercase tracking-wider mb-4 flex items-center gap-2 font-sans transition-colors truncate`}>
-                      <Play className="w-4 h-4 text-[#859900] shrink-0" /> <span className="truncate">{selectedBatchItem.name}</span>
-                    </h2>
-                    <div className={`relative aspect-video ${theme.bgMain} rounded-lg overflow-hidden border ${theme.border} flex items-center justify-center`}>
-                      {selectedBatchItem.previewUrl ? (
-                        <video
-                          key={selectedBatchItem.id}
-                          ref={batchVideoRef}
-                          src={selectedBatchItem.previewUrl}
-                          controls
-                          onTimeUpdate={handleBatchTimeUpdate}
-                          onSeeked={handleBatchTimeUpdate}
-                          className="w-full h-full object-contain"
-                        />
-                      ) : (
-                        <div className="flex flex-col items-center gap-2 text-center px-6">
-                          <Link2 className={`w-8 h-8 ${theme.textSub}`} />
-                          {selectedBatchItem.sourceUrl && (
-                            <a
-                              href={selectedBatchItem.sourceUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-xs text-[#268bd2] hover:underline break-all font-sans"
+            <div
+              className={`flex items-center gap-2 mb-8 border-b ${theme.border}`}
+            >
+              <button
+                className={tabBtn(activeTab === "single")}
+                onClick={() => setActiveTab("single")}
+              >
+                <Film className="w-4 h-4" /> Video đơn
+              </button>
+
+              <button
+                className={tabBtn(activeTab === "batch")}
+                onClick={() => setActiveTab("batch")}
+              >
+                <Layers className="w-4 h-4" /> Xử lý hàng loạt
+              </button>
+            </div>
+
+            {activeTab === "single" && (
+              <>
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                  <div className="lg:col-span-7 space-y-6">
+                    <div
+                      className={`${theme.bgCard} border-2 ${theme.border} p-6`}
+                    >
+                      <div className="flex items-center justify-between mb-4">
+                        <h2
+                          className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider flex items-center gap-2`}
+                        >
+                          <Play className="w-4 h-4 text-[#859900]" /> Video
+                          Input
+                        </h2>
+
+                        {singleSourceMode === "file" && selectedFile && (
+                          <span
+                            className={`text-xs ${theme.textSub} truncate max-w-[200px]`}
+                          >
+                            {selectedFile.name}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2 mb-4">
+                        <button
+                          onClick={() => setSingleSourceMode("file")}
+                          className={tabBtn(singleSourceMode === "file")}
+                        >
+                          <Upload className="w-3.5 h-3.5" /> Tải file
+                        </button>
+
+                        <button
+                          onClick={() => setSingleSourceMode("url")}
+                          className={tabBtn(singleSourceMode === "url")}
+                        >
+                          <Link2 className="w-3.5 h-3.5" /> Dán URL
+                        </button>
+                      </div>
+
+                      {singleSourceMode === "file" ? (
+                        !selectedFile ? (
+                          <label
+                            className={`border-2 border-dashed ${theme.border} hover:border-[#859900] ${theme.inputBg} p-12 flex flex-col items-center justify-center cursor-pointer transition-colors group`}
+                          >
+                            <Upload className="w-12 h-12 text-[#93a1a1] group-hover:text-[#859900] mb-4 transition-colors" />
+
+                            <p
+                              className={`text-sm ${theme.textHeading} font-medium mb-1`}
                             >
-                              {selectedBatchItem.sourceUrl}
-                            </a>
-                          )}
-                          <p className={`text-[11px] ${theme.textMain} font-sans`}>
-                            Video được backend tải trực tiếp từ link này để phân tích, không xem trước được ở đây.
-                          </p>
+                              Drag and drop video here or{" "}
+                              <span className="text-[#268bd2]">
+                                browse files
+                              </span>
+                            </p>
+
+                            <p className={`text-xs ${theme.textMain}`}>
+                              Supports MP4, MOV, AVI (Max 100MB)
+                            </p>
+
+                            <input
+                              type="file"
+                              accept="video/*"
+                              className="hidden"
+                              onChange={handleFileChange}
+                            />
+                          </label>
+                        ) : (
+                          <div className="space-y-4">
+                            <div
+                              className={`relative aspect-video ${theme.bgMain} border-2 ${theme.border} overflow-hidden flex items-center justify-center`}
+                            >
+                              {videoUrl && (
+                                <video
+                                  ref={videoRef}
+                                  src={videoUrl}
+                                  controls
+                                  onTimeUpdate={handleTimeUpdate}
+                                  onSeeked={handleTimeUpdate}
+                                  className="w-full h-full object-contain"
+                                />
+                              )}
+                            </div>
+
+                            <div className="flex gap-3">
+                              <button
+                                onClick={handleAnalyze}
+                                disabled={
+                                  isAnalyzing || selectedWeightIds.length === 0
+                                }
+                                className="flex-1 bg-[#859900] hover:brightness-110 text-[#002b36] font-bold py-3 px-6 border-2 border-[#859900] flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                              >
+                                {isAnalyzing ? (
+                                  <>
+                                    <RefreshCw className="w-5 h-5 animate-spin" />{" "}
+                                    Analyzing frames...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Cpu className="w-5 h-5" /> Chạy pipeline AI
+                                    xử lí ({selectedWeightIds.length} weight)
+                                  </>
+                                )}
+                              </button>
+
+                              <button
+                                onClick={() => {
+                                  setSelectedFile(null);
+                                  setSingleResultsByWeight({});
+                                }}
+                                className={`px-4 py-3 border-2 ${theme.border} ${theme.btnCancel} text-sm font-medium`}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      ) : (
+                        <div className="space-y-4">
+                          <input
+                            type="url"
+                            value={singleUrlInput}
+                            onChange={(e) =>
+                              setSingleUrlInput(e.target.value)
+                            }
+                            placeholder="Dán link YouTube / TikTok / Facebook..."
+                            className={`w-full px-4 py-3 border-2 ${theme.border} ${theme.inputBg} ${theme.textHeading} text-sm outline-none focus:border-[#859900]`}
+                          />
+
+                          <div
+                            className={`aspect-video ${theme.bgMain} border-2 ${theme.border} flex flex-col items-center justify-center gap-2 px-6 text-center`}
+                          >
+                            <Link2 className={`w-8 h-8 ${theme.textSub}`} />
+
+                            {singleUrlInput.trim() ? (
+                              <p
+                                className={`text-xs ${theme.textSub} break-all`}
+                              >
+                                {singleUrlInput.trim()}
+                              </p>
+                            ) : (
+                              <p className={`text-xs ${theme.textMain}`}>
+                                Video sẽ được backend tải trực tiếp từ link này
+                                (yt-dlp) rồi chạy pipeline — không xem trước
+                                được ở đây.
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="flex gap-3">
+                            <button
+                              onClick={handleAnalyze}
+                              disabled={
+                                isAnalyzing ||
+                                selectedWeightIds.length === 0 ||
+                                !singleUrlInput.trim()
+                              }
+                              className="flex-1 bg-[#859900] hover:brightness-110 text-[#002b36] font-bold py-3 px-6 border-2 border-[#859900] flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                            >
+                              {isAnalyzing ? (
+                                <>
+                                  <RefreshCw className="w-5 h-5 animate-spin" />{" "}
+                                  Đang tải & phân tích...
+                                </>
+                              ) : (
+                                <>
+                                  <Cpu className="w-5 h-5" /> Tải & chạy
+                                  pipeline AI ({selectedWeightIds.length}{" "}
+                                  weight)
+                                </>
+                              )}
+                            </button>
+
+                            <button
+                              onClick={() => {
+                                setSingleUrlInput("");
+                                setSingleResultsByWeight({});
+                              }}
+                              className={`px-4 py-3 border-2 ${theme.border} ${theme.btnCancel} text-sm font-medium`}
+                            >
+                              Cancel
+                            </button>
+                          </div>
                         </div>
                       )}
                     </div>
-                    {labelMap.has(selectedBatchItem.name) && (
-                      <p className={`text-xs ${theme.textSub} font-sans mt-3`}>
-                        Nhãn thật (CSV): <span className={`font-bold ${theme.textHeading}`}>
-                          {labelMap.get(selectedBatchItem.name) === 1 ? "AI" : "Real"}
-                        </span>
-                      </p>
-                    )}
+                  </div>
+
+                  <div className="lg:col-span-5 space-y-6">
+                    <div
+                      className={`${theme.bgCard} border-2 ${theme.border} p-6 h-full flex flex-col justify-between`}
+                    >
+                      <div>
+                        <h2
+                          className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider mb-6 flex items-center gap-2`}
+                        >
+                          <BarChart2 className="w-4 h-4 text-[#268bd2]" />{" "}
+                          Analysis Results
+                        </h2>
+
+                        {Object.keys(singleResultsByWeight).length > 0 && (
+                          <WeightResultTabs
+                            weights={availableWeights}
+                            resultsByWeight={singleResultsByWeight}
+                            activeWeightId={activeWeightId}
+                            onSelect={setActiveWeightId}
+                            theme={theme}
+                          />
+                        )}
+
+                        {Object.keys(singleResultsByWeight).length === 0 &&
+                          !isAnalyzing && (
+                            <div
+                              className={`text-center py-16 ${theme.textMain}`}
+                            >
+                              <Cpu className="w-12 h-12 mx-auto mb-3 opacity-40" />
+                              <p className="text-sm">
+                                No data available. Please upload a video and run
+                                the model.
+                              </p>
+                            </div>
+                          )}
+
+                        {isAnalyzing && (
+                          <div className="space-y-6 py-8">
+                            <div className="animate-pulse space-y-3">
+                              <div
+                                className={`h-4 ${theme.bgMain} w-3/4`}
+                              ></div>
+                              <div className={`h-10 ${theme.bgMain}`}></div>
+                              <div className={`h-20 ${theme.bgMain}`}></div>
+                            </div>
+
+                            <p className="text-xs text-center text-[#268bd2] animate-pulse">
+                              Extracting Spatial & Temporal Features...
+                            </p>
+                          </div>
+                        )}
+
+                        {!isAnalyzing && activeSingleEntry?.error && (
+                          <div className="text-center py-16 text-[#dc322f]">
+                            <X className="w-12 h-12 mx-auto mb-3 opacity-60" />
+                            <p className="text-sm">
+                              Lỗi với weight này: {activeSingleEntry.error}
+                            </p>
+                          </div>
+                        )}
+
+                        {!isAnalyzing && singleResult && (
+                          <ResultSummary
+                            result={singleResult}
+                            theme={theme}
+                            threshold={threshold}
+                          />
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </div>
 
-                <div className="lg:col-span-5 space-y-6">
-                  <div className={`${theme.bgCard} border ${theme.border} p-6 h-full transition-colors duration-300`}>
-                    <h2 className={`text-sm font-normal ${theme.textHeading} uppercase tracking-wider mb-6 flex items-center gap-2 font-sans transition-colors`}>
-                      <BarChart2 className="w-4 h-4 text-[#268bd2]" /> Analysis Results
+                {singleScores.length > 0 && !activeSingleEntry?.error && (
+                  <div
+                    className={`${theme.bgCard} border-2 ${theme.border} p-6 mt-8`}
+                  >
+                    <p className={`text-sm ${theme.textSub} mb-4`}>
+                      Play the video to view real-time data below.
+                    </p>
+
+                    <h2
+                      className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider mb-4 flex items-center gap-2`}
+                    >
+                      <BarChart2 className="w-4 h-4 text-[#268bd2]" /> Video
+                      Analysis
                     </h2>
 
-                    {selectedBatchItem.status === "done" && selectedBatchItem.resultsByWeight && (
-                      <WeightResultTabs
-                        weights={availableWeights}
-                        resultsByWeight={selectedBatchItem.resultsByWeight}
-                        activeWeightId={activeWeightId}
-                        onSelect={setActiveWeightId}
-                        theme={theme}
-                      />
-                    )}
+                    <p className={`text-xs ${theme.textMain} mb-2`}>
+                      Bấm vào biểu đồ để tua video tới đúng thời điểm đó.
+                    </p>
 
-                    {selectedBatchItem.status === "queued" && (
-                      <div className={`text-center py-16 ${theme.textMain}`}>
-                        <Clock className="w-12 h-12 mx-auto mb-3 opacity-40" />
-                        <p className="text-sm font-sans">Video đang chờ trong hàng đợi.</p>
-                      </div>
-                    )}
-
-                    {selectedBatchItem.status === "processing" && (
-                      <div className="space-y-6 py-8">
-                        <div className="animate-pulse space-y-3">
-                          <div className={`h-4 ${theme.bgMain} rounded w-3/4`}></div>
-                          <div className={`h-10 ${theme.bgMain} rounded`}></div>
-                          <div className={`h-20 ${theme.bgMain} rounded`}></div>
-                        </div>
-                        <p className="text-xs text-center text-[#268bd2] font-sans animate-pulse">
-                          Extracting Spatial & Temporal Features...
-                        </p>
-                      </div>
-                    )}
-
-                    {selectedBatchItem.status === "error" && (
-                      <div className="text-center py-16 text-[#dc322f]">
-                        <X className="w-12 h-12 mx-auto mb-3 opacity-60" />
-                        <p className="text-sm font-sans">Xử lý thất bại: {selectedBatchItem.error}</p>
-                      </div>
-                    )}
-
-                    {selectedBatchItem.status === "done" && !activeWeightId && (
-                      <div className={`text-center py-16 ${theme.textMain}`}>
-                        <p className="text-sm font-sans">Chọn 1 tab weight ở trên để xem kết quả.</p>
-                      </div>
-                    )}
-
-                    {selectedBatchItem.status === "done" && activeWeightId && !activeBatchEntry && (
-                      <div className={`text-center py-16 ${theme.textMain}`}>
-                        <p className="text-sm font-sans">Video này chưa được chạy với weight đang xem.</p>
-                      </div>
-                    )}
-
-                    {selectedBatchItem.status === "done" && activeBatchEntry?.error && (
-                      <div className="text-center py-16 text-[#dc322f]">
-                        <X className="w-12 h-12 mx-auto mb-3 opacity-60" />
-                        <p className="text-sm font-sans">Lỗi với weight này: {activeBatchEntry.error}</p>
-                      </div>
-                    )}
-
-                    {selectedBatchItem.status === "done" && activeBatchEntry && !activeBatchEntry.error && (
-                      <ResultSummary result={activeBatchEntry.result} theme={theme} threshold={threshold} />
-                    )}
+                    <ScoreChart
+                      data={singleScores}
+                      currentTime={currentTime}
+                      onSeek={handleSeek}
+                      isDarkMode={isDarkMode}
+                      threshold={threshold}
+                    />
                   </div>
-                </div>
-              </div>
-            ) : (
-              batchItems.length > 0 && (
-                <div className={`${theme.bgCard} border ${theme.border} p-10 text-center ${theme.textMain} font-sans`}>
-                  Chọn một video trong lưới phía trên để xem chi tiết và biểu đồ.
-                </div>
-              )
+                )}
+              </>
             )}
 
-            {/* Biểu đồ của video đang chọn (theo weight đang xem) */}
-            {selectedBatchItem &&
-              selectedBatchItem.status === "done" &&
-              activeBatchEntry &&
-              !activeBatchEntry.error &&
-              (activeBatchEntry.scores?.length ?? 0) > 0 && (
-                <div className={`${theme.bgCard} border ${theme.border} p-6 transition-colors duration-300`}>
-                  <p className={`text-sm ${theme.textSub} mb-4 font-sans transition-colors`}>
-                    Play the video to view real-time data below.
-                  </p>
-                  <h2 className={`text-sm font-normal ${theme.textHeading} uppercase tracking-wider mb-4 flex items-center gap-2 font-sans transition-colors`}>
-                    <BarChart2 className="w-4 h-4 text-[#268bd2]" /> Video Analysis
-                  </h2>
-                  <p className={`text-xs ${theme.textMain} mb-2 font-sans transition-colors`}>
-                    Bấm vào biểu đồ để tua video tới đúng thời điểm đó.
-                  </p>
-                  <ScoreChart
-                    data={activeBatchEntry.scores}
-                    currentTime={batchCurrentTime}
-                    onSeek={handleBatchSeek}
-                    isDarkMode={isDarkMode}
-                    threshold={threshold}
-                  />
+            {activeTab === "batch" && (
+              <div className="space-y-6">
+                <div
+                  className={`${theme.bgCard} border-2 ${theme.border} p-6`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+                    <h2
+                      className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider flex items-center gap-2`}
+                    >
+                      <Layers className="w-4 h-4 text-[#859900]" /> Xử lý nhiều
+                      video
+                    </h2>
+
+                    <div className="flex flex-wrap items-center gap-3">
+                      {batchItems.length > 0 && (
+                        <span className={`text-xs ${theme.textSub}`}>
+                          {doneCount}/{batchItems.length} đã xong
+                        </span>
+                      )}
+
+                      <label
+                        className={`text-xs px-3 py-2 border-2 ${theme.border} ${theme.btnCancel} cursor-pointer flex items-center gap-2`}
+                      >
+                        <Upload className="w-3.5 h-3.5" /> Thêm video
+                        <input
+                          type="file"
+                          accept="video/*"
+                          multiple
+                          className="hidden"
+                          onChange={handleBatchFilesSelected}
+                        />
+                      </label>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowBatchUrlBox((v) => !v)}
+                        className={`text-xs px-3 py-2 border-2 ${theme.border} ${theme.btnCancel} cursor-pointer flex items-center gap-2`}
+                      >
+                        <Link2 className="w-3.5 h-3.5" /> Thêm từ URL
+                      </button>
+
+                      <label
+                        className={`text-xs px-3 py-2 border-2 ${theme.border} ${theme.btnCancel} cursor-pointer flex items-center gap-2`}
+                      >
+                        <FileSpreadsheet className="w-3.5 h-3.5" /> Tải file
+                        nhãn CSV
+                        <input
+                          type="file"
+                          accept=".csv,text/csv"
+                          className="hidden"
+                          onChange={handleCsvFileSelected}
+                        />
+                      </label>
+
+                      <button
+                        onClick={runAllBatch}
+                        disabled={
+                          isBatchRunning ||
+                          pendingCount === 0 ||
+                          selectedWeightIds.length === 0
+                        }
+                        className="text-xs font-bold px-4 py-2 border-2 bg-[#859900] hover:brightness-110 text-[#002b36] flex items-center gap-2 transition-all disabled:opacity-50"
+                      >
+                        {isBatchRunning ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />{" "}
+                            Đang chạy...
+                          </>
+                        ) : (
+                          <>
+                            <Cpu className="w-3.5 h-3.5" /> Chạy tất cả (
+                            {pendingCount}) · {selectedWeightIds.length} weight
+                          </>
+                        )}
+                      </button>
+
+                      <button
+                        onClick={() =>
+                          downloadResultsCsv(batchItems, labelMap, threshold)
+                        }
+                        disabled={doneCount === 0}
+                        className={`text-xs px-3 py-2 border-2 ${theme.border} ${theme.btnCancel} flex items-center gap-2 transition-colors disabled:opacity-40`}
+                      >
+                        <Download className="w-3.5 h-3.5" /> Xuất CSV
+                      </button>
+
+                      <button
+                        onClick={clearBatch}
+                        disabled={isBatchRunning || batchItems.length === 0}
+                        className={`text-xs px-3 py-2 border-2 ${theme.border} ${theme.btnCancel} flex items-center gap-2 transition-colors disabled:opacity-40`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> Xóa tất cả
+                      </button>
+                    </div>
+                  </div>
+
+                  {showBatchUrlBox && (
+                    <div
+                      className={`mb-4 p-3 border-2 ${theme.border} ${theme.bgMain}`}
+                    >
+                      <textarea
+                        value={batchUrlText}
+                        onChange={(e) => setBatchUrlText(e.target.value)}
+                        placeholder={
+                          "Dán link YouTube / TikTok / Facebook..., mỗi dòng 1 link"
+                        }
+                        rows={3}
+                        className={`w-full px-3 py-2 border-2 ${theme.border} ${theme.inputBg} ${theme.textHeading} text-xs outline-none focus:border-[#859900] mb-2`}
+                      />
+
+                      <div className="flex justify-end gap-2">
+                        <button
+                          onClick={() => {
+                            setShowBatchUrlBox(false);
+                            setBatchUrlText("");
+                          }}
+                          className={`text-xs px-3 py-1.5 border-2 ${theme.border} ${theme.btnCancel}`}
+                        >
+                          Hủy
+                        </button>
+
+                        <button
+                          onClick={handleAddBatchUrls}
+                          disabled={!batchUrlText.trim()}
+                          className="text-xs font-bold px-3 py-1.5 border-2 bg-[#859900] hover:brightness-110 text-[#002b36] disabled:opacity-50"
+                        >
+                          Thêm vào danh sách
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {csvInfo && (
+                    <div
+                      className={`flex items-center justify-between mb-4 px-3 py-2 border-2 ${theme.bgMain} ${theme.border} text-xs`}
+                    >
+                      <span className={theme.textSub}>
+                        <span
+                          className={`${theme.textHeading} font-medium`}
+                        >
+                          {csvInfo.fileName}
+                        </span>{" "}
+                        · {csvInfo.totalRows} dòng nhãn
+                        {batchItems.length > 0 && (
+                          <>
+                            {" "}
+                            · khớp {matchedLabelCount}/{batchItems.length} video
+                            đã tải
+                          </>
+                        )}
+                      </span>
+
+                      <button
+                        onClick={clearCsv}
+                        className="text-[#dc322f] hover:underline"
+                      >
+                        Bỏ file CSV
+                      </button>
+                    </div>
+                  )}
+
+                  {batchItems.length === 0 ? (
+                    <label
+                      className={`border-2 border-dashed ${theme.border} hover:border-[#859900] ${theme.inputBg} p-12 flex flex-col items-center justify-center cursor-pointer transition-colors group`}
+                    >
+                      <Upload className="w-12 h-12 text-[#93a1a1] group-hover:text-[#859900] mb-4 transition-colors" />
+
+                      <p
+                        className={`text-sm ${theme.textHeading} font-medium mb-1`}
+                      >
+                        Kéo thả nhiều video vào đây hoặc{" "}
+                        <span className="text-[#268bd2]">chọn nhiều file</span>
+                      </p>
+
+                      <p className={`text-xs ${theme.textMain}`}>
+                        Sau khi tải lên, bấm "Chạy tất cả" để xử lý lần lượt
+                        từng video (mỗi video chạy hết các weight đã chọn cùng
+                        lúc)
+                      </p>
+
+                      <input
+                        type="file"
+                        accept="video/*"
+                        multiple
+                        className="hidden"
+                        onChange={handleBatchFilesSelected}
+                      />
+                    </label>
+                  ) : (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-3">
+                      {batchItems.map((item) => (
+                        <BatchGridCard
+                          key={item.id}
+                          item={item}
+                          groundTruth={labelMap.get(item.name)}
+                          threshold={threshold}
+                          activeWeightId={activeWeightId}
+                          isSelected={selectedBatchId === item.id}
+                          onSelect={() => setSelectedBatchId(item.id)}
+                          onRemove={() => removeBatchItem(item.id)}
+                          disableRemove={item.status === "processing"}
+                        />
+                      ))}
+                    </div>
+                  )}
                 </div>
-              )}
-          </div>
+
+                {selectedBatchItem ? (
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                    <div className="lg:col-span-7 space-y-6">
+                      <div
+                        className={`${theme.bgCard} border-2 ${theme.border} p-6`}
+                      >
+                        <h2
+                          className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider mb-4 flex items-center gap-2 truncate`}
+                        >
+                          <Play className="w-4 h-4 text-[#859900] shrink-0" />{" "}
+                          <span className="truncate">
+                            {selectedBatchItem.name}
+                          </span>
+                        </h2>
+
+                        <div
+                          className={`relative aspect-video ${theme.bgMain} border-2 ${theme.border} overflow-hidden flex items-center justify-center`}
+                        >
+                          {selectedBatchItem.previewUrl ? (
+                            <video
+                              key={selectedBatchItem.id}
+                              ref={batchVideoRef}
+                              src={selectedBatchItem.previewUrl}
+                              controls
+                              onTimeUpdate={handleBatchTimeUpdate}
+                              onSeeked={handleBatchTimeUpdate}
+                              className="w-full h-full object-contain"
+                            />
+                          ) : (
+                            <div className="flex flex-col items-center gap-2 text-center px-6">
+                              <Link2 className={`w-8 h-8 ${theme.textSub}`} />
+
+                              {selectedBatchItem.sourceUrl && (
+                                <a
+                                  href={selectedBatchItem.sourceUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-xs text-[#268bd2] hover:underline break-all"
+                                >
+                                  {selectedBatchItem.sourceUrl}
+                                </a>
+                              )}
+
+                              <p className={`text-[11px] ${theme.textMain}`}>
+                                Video được backend tải trực tiếp từ link này để
+                                phân tích, không xem trước được ở đây.
+                              </p>
+                            </div>
+                          )}
+                        </div>
+
+                        {labelMap.has(selectedBatchItem.name) && (
+                          <p className={`text-xs ${theme.textSub} mt-3`}>
+                            Nhãn thật (CSV):{" "}
+                            <span
+                              className={`font-bold ${theme.textHeading}`}
+                            >
+                              {labelMap.get(selectedBatchItem.name) === 1
+                                ? "AI"
+                                : "Real"}
+                            </span>
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="lg:col-span-5 space-y-6">
+                      <div
+                        className={`${theme.bgCard} border-2 ${theme.border} p-6 h-full`}
+                      >
+                        <h2
+                          className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider mb-6 flex items-center gap-2`}
+                        >
+                          <BarChart2 className="w-4 h-4 text-[#268bd2]" />{" "}
+                          Analysis Results
+                        </h2>
+
+                        {selectedBatchItem.status === "done" &&
+                          selectedBatchItem.resultsByWeight && (
+                            <WeightResultTabs
+                              weights={availableWeights}
+                              resultsByWeight={
+                                selectedBatchItem.resultsByWeight
+                              }
+                              activeWeightId={activeWeightId}
+                              onSelect={setActiveWeightId}
+                              theme={theme}
+                            />
+                          )}
+
+                        {selectedBatchItem.status === "queued" && (
+                          <div
+                            className={`text-center py-16 ${theme.textMain}`}
+                          >
+                            <Clock className="w-12 h-12 mx-auto mb-3 opacity-40" />
+                            <p className="text-sm">
+                              Video đang chờ trong hàng đợi.
+                            </p>
+                          </div>
+                        )}
+
+                        {selectedBatchItem.status === "processing" && (
+                          <div className="space-y-6 py-8">
+                            <div className="animate-pulse space-y-3">
+                              <div
+                                className={`h-4 ${theme.bgMain} w-3/4`}
+                              ></div>
+                              <div className={`h-10 ${theme.bgMain}`}></div>
+                              <div className={`h-20 ${theme.bgMain}`}></div>
+                            </div>
+
+                            <p className="text-xs text-center text-[#268bd2] animate-pulse">
+                              Extracting Spatial & Temporal Features...
+                            </p>
+                          </div>
+                        )}
+
+                        {selectedBatchItem.status === "error" && (
+                          <div className="text-center py-16 text-[#dc322f]">
+                            <X className="w-12 h-12 mx-auto mb-3 opacity-60" />
+                            <p className="text-sm">
+                              Xử lý thất bại: {selectedBatchItem.error}
+                            </p>
+                          </div>
+                        )}
+
+                        {selectedBatchItem.status === "done" &&
+                          !activeWeightId && (
+                            <div
+                              className={`text-center py-16 ${theme.textMain}`}
+                            >
+                              <p className="text-sm">
+                                Chọn 1 tab weight ở trên để xem kết quả.
+                              </p>
+                            </div>
+                          )}
+
+                        {selectedBatchItem.status === "done" &&
+                          activeWeightId &&
+                          !activeBatchEntry && (
+                            <div
+                              className={`text-center py-16 ${theme.textMain}`}
+                            >
+                              <p className="text-sm">
+                                Video này chưa được chạy với weight đang xem.
+                              </p>
+                            </div>
+                          )}
+
+                        {selectedBatchItem.status === "done" &&
+                          activeBatchEntry?.error && (
+                            <div className="text-center py-16 text-[#dc322f]">
+                              <X className="w-12 h-12 mx-auto mb-3 opacity-60" />
+                              <p className="text-sm">
+                                Lỗi với weight này: {activeBatchEntry.error}
+                              </p>
+                            </div>
+                          )}
+
+                        {selectedBatchItem.status === "done" &&
+                          activeBatchEntry &&
+                          !activeBatchEntry.error && (
+                            <ResultSummary
+                              result={activeBatchEntry.result}
+                              theme={theme}
+                              threshold={threshold}
+                            />
+                          )}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  batchItems.length > 0 && (
+                    <div
+                      className={`${theme.bgCard} border-2 ${theme.border} p-10 text-center ${theme.textMain}`}
+                    >
+                      Chọn một video trong lưới phía trên để xem chi tiết và
+                      biểu đồ.
+                    </div>
+                  )
+                )}
+
+                {selectedBatchItem &&
+                  selectedBatchItem.status === "done" &&
+                  activeBatchEntry &&
+                  !activeBatchEntry.error &&
+                  (activeBatchEntry.scores?.length ?? 0) > 0 && (
+                    <div
+                      className={`${theme.bgCard} border-2 ${theme.border} p-6`}
+                    >
+                      <p className={`text-sm ${theme.textSub} mb-4`}>
+                        Play the video to view real-time data below.
+                      </p>
+
+                      <h2
+                        className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider mb-4 flex items-center gap-2`}
+                      >
+                        <BarChart2 className="w-4 h-4 text-[#268bd2]" /> Video
+                        Analysis
+                      </h2>
+
+                      <p className={`text-xs ${theme.textMain} mb-2`}>
+                        Bấm vào biểu đồ để tua video tới đúng thời điểm đó.
+                      </p>
+
+                      <ScoreChart
+                        data={activeBatchEntry.scores}
+                        currentTime={batchCurrentTime}
+                        onSeek={handleBatchSeek}
+                        isDarkMode={isDarkMode}
+                        threshold={threshold}
+                      />
+                    </div>
+                  )}
+              </div>
+            )}
+          </>
+        ) : (
+          <DashboardView
+            theme={theme}
+            isDarkMode={isDarkMode}
+            mockMode={mockMode}
+            setMockMode={(v: boolean) => {
+              setMockMode(v);
+              hasAutoSelectedRef.current = false;
+            }}
+            threshold={threshold}
+            setThreshold={setThreshold}
+            availableWeights={availableWeights}
+            selectedWeightIds={selectedWeightIds}
+            toggleWeightSelected={toggleWeightSelected}
+            activeWeightId={activeWeightId}
+            setActiveWeightId={setActiveWeightId}
+            weightsError={weightsError}
+            loadWeights={loadWeights}
+            batchItems={batchItems}
+            labelMap={labelMap}
+            metrics={metrics}
+            isBatchRunning={isBatchRunning}
+            runAllBatch={runAllBatch}
+            removeBatchItem={removeBatchItem}
+            handleBatchFilesSelected={handleBatchFilesSelected}
+            handleAddBatchUrls={handleAddBatchUrls}
+            showBatchUrlBox={showBatchUrlBox}
+            setShowBatchUrlBox={setShowBatchUrlBox}
+            batchUrlText={batchUrlText}
+            setBatchUrlText={setBatchUrlText}
+            handleCsvFileSelected={handleCsvFileSelected}
+            csvInfo={csvInfo}
+            downloadResultsCsv={downloadResultsCsv}
+            search={dashboardSearch}
+            setSearch={setDashboardSearch}
+            statusFilter={dashboardStatusFilter}
+            setStatusFilter={setDashboardStatusFilter}
+            labelFilter={dashboardLabelFilter}
+            setLabelFilter={setDashboardLabelFilter}
+            selectedBatchId={selectedBatchId}
+            setSelectedBatchId={setSelectedBatchId}
+            selectedBatchItem={selectedBatchItem}
+            activeBatchEntry={activeBatchEntry}
+            batchVideoRef={batchVideoRef}
+            batchCurrentTime={batchCurrentTime}
+            handleBatchTimeUpdate={handleBatchTimeUpdate}
+            handleBatchSeek={handleBatchSeek}
+          />
         )}
-        </>
-      ) : (
-        <DashboardView
-          theme={theme}
-          isDarkMode={isDarkMode}
-          mockMode={mockMode}
-          setMockMode={(v: boolean) => {
-            setMockMode(v);
-            hasAutoSelectedRef.current = false;
-          }}
-          threshold={threshold}
-          setThreshold={setThreshold}
-          availableWeights={availableWeights}
-          selectedWeightIds={selectedWeightIds}
-          toggleWeightSelected={toggleWeightSelected}
-          activeWeightId={activeWeightId}
-          setActiveWeightId={setActiveWeightId}
-          weightsError={weightsError}
-          loadWeights={loadWeights}
-          batchItems={batchItems}
-          labelMap={labelMap}
-          metrics={metrics}
-          isBatchRunning={isBatchRunning}
-          runAllBatch={runAllBatch}
-          removeBatchItem={removeBatchItem}
-          handleBatchFilesSelected={handleBatchFilesSelected}
-          handleAddBatchUrls={handleAddBatchUrls}
-          showBatchUrlBox={showBatchUrlBox}
-          setShowBatchUrlBox={setShowBatchUrlBox}
-          batchUrlText={batchUrlText}
-          setBatchUrlText={setBatchUrlText}
-          handleCsvFileSelected={handleCsvFileSelected}
-          csvInfo={csvInfo}
-          downloadResultsCsv={downloadResultsCsv}
-          search={dashboardSearch}
-          setSearch={setDashboardSearch}
-          statusFilter={dashboardStatusFilter}
-          setStatusFilter={setDashboardStatusFilter}
-          labelFilter={dashboardLabelFilter}
-          setLabelFilter={setDashboardLabelFilter}
-          selectedBatchId={selectedBatchId}
-          setSelectedBatchId={setSelectedBatchId}
-          selectedBatchItem={selectedBatchItem}
-          activeBatchEntry={activeBatchEntry}
-          batchVideoRef={batchVideoRef}
-          batchCurrentTime={batchCurrentTime}
-          handleBatchTimeUpdate={handleBatchTimeUpdate}
-          handleBatchSeek={handleBatchSeek}
-        />
-      )}
       </main>
     </div>
   );

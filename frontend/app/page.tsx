@@ -64,8 +64,8 @@ function t(vi: string, en: string): string {
   return CURRENT_LANG === "vi" ? vi : en;
 }
 
-// ── Nền nghệ thuật thuật toán (flow field, có seed cố định) ──────────────
-function FlowFieldBackground({ isDarkMode }: { isDarkMode: boolean }) {
+// ── Nền mạng neural (node + liên kết + xung tín hiệu, seed cố định) ─────
+function NeuralBackground({ isDarkMode }: { isDarkMode: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -76,9 +76,16 @@ function FlowFieldBackground({ isDarkMode }: { isDarkMode: boolean }) {
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const rand = mulberry32(20260614);
-    const stroke = isDarkMode ? "rgba(38,139,210,0.55)" : "rgba(88,110,117,0.40)";
-    let w = 0, h = 0, tick = 0, raf = 0;
-    let pts: { x: number; y: number }[] = [];
+    const lineRGB = isDarkMode ? "38,139,210" : "88,110,117";
+    const nodeRGB = isDarkMode ? "147,161,161" : "88,110,117";
+    const pulseRGB = isDarkMode ? "42,161,152" : "38,139,210";
+    const LINK = 150;
+
+    type Node = { x: number; y: number; vx: number; vy: number; r: number };
+    type Pulse = { a: number; b: number; p: number };
+    let nodes: Node[] = [];
+    let pulses: Pulse[] = [];
+    let w = 0, h = 0, frame = 0, raf = 0;
 
     const resize = () => {
       w = window.innerWidth;
@@ -88,46 +95,87 @@ function FlowFieldBackground({ isDarkMode }: { isDarkMode: boolean }) {
       canvas.style.width = `${w}px`;
       canvas.style.height = `${h}px`;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, w, h);
-      const n = Math.round(Math.min(90, (w * h) / 16000));
-      pts = Array.from({ length: n }, () => ({ x: rand() * w, y: rand() * h }));
+      const n = Math.round(Math.min(80, Math.max(24, (w * h) / 22000)));
+      nodes = Array.from({ length: n }, () => ({
+        x: rand() * w,
+        y: rand() * h,
+        vx: (rand() - 0.5) * 0.28,
+        vy: (rand() - 0.5) * 0.28,
+        r: 1.2 + rand() * 1.6,
+      }));
+      pulses = [];
     };
 
-    const step = () => {
-      ctx.globalCompositeOperation = "destination-out";
-      ctx.fillStyle = "rgba(0,0,0,0.045)";
-      ctx.fillRect(0, 0, w, h);
-      ctx.globalCompositeOperation = "source-over";
-      ctx.strokeStyle = stroke;
-      ctx.lineWidth = 1;
-      tick += 0.0025;
-      for (const p of pts) {
-        const a = (Math.sin(p.x * 0.0035 + tick) + Math.cos(p.y * 0.0042 - tick * 0.7)) * Math.PI;
-        const nx = p.x + Math.cos(a) * 1.4;
-        const ny = p.y + Math.sin(a) * 1.4;
+    const draw = (move: boolean) => {
+      ctx.clearRect(0, 0, w, h);
+
+      if (move) {
+        for (const n of nodes) {
+          n.x += n.vx;
+          n.y += n.vy;
+          if (n.x < 0 || n.x > w) n.vx *= -1;
+          if (n.y < 0 || n.y > h) n.vy *= -1;
+        }
+      }
+
+      const near: [number, number][] = [];
+      for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+          const dx = nodes[i].x - nodes[j].x;
+          const dy = nodes[i].y - nodes[j].y;
+          const d = Math.sqrt(dx * dx + dy * dy);
+          if (d < LINK) {
+            near.push([i, j]);
+            ctx.strokeStyle = `rgba(${lineRGB},${(1 - d / LINK) * 0.5})`;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(nodes[i].x, nodes[i].y);
+            ctx.lineTo(nodes[j].x, nodes[j].y);
+            ctx.stroke();
+          }
+        }
+      }
+
+      for (const n of nodes) {
+        ctx.fillStyle = `rgba(${nodeRGB},0.75)`;
         ctx.beginPath();
-        ctx.moveTo(p.x, p.y);
-        ctx.lineTo(nx, ny);
-        ctx.stroke();
-        p.x = nx; p.y = ny;
-        if (p.x < 0 || p.x > w || p.y < 0 || p.y > h) {
-          p.x = rand() * w; p.y = rand() * h;
+        ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      if (move) {
+        frame++;
+        if (frame % 36 === 0 && near.length > 0 && pulses.length < 14) {
+          const [a, b] = near[Math.floor(rand() * near.length)];
+          pulses.push({ a, b, p: 0 });
+        }
+        pulses = pulses.filter((q) => q.p < 1);
+        for (const q of pulses) {
+          q.p += 0.018;
+          const A = nodes[q.a], B = nodes[q.b];
+          const x = A.x + (B.x - A.x) * q.p;
+          const y = A.y + (B.y - A.y) * q.p;
+          const g = ctx.createRadialGradient(x, y, 0, x, y, 9);
+          g.addColorStop(0, `rgba(${pulseRGB},0.9)`);
+          g.addColorStop(1, `rgba(${pulseRGB},0)`);
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(x, y, 9, 0, Math.PI * 2);
+          ctx.fill();
         }
       }
     };
 
     const loop = () => {
-      if (!document.hidden) step();
+      if (!document.hidden) draw(true);
       raf = requestAnimationFrame(loop);
     };
 
     resize();
     window.addEventListener("resize", resize);
-    if (reduce) {
-      for (let i = 0; i < 260; i++) step(); // tranh tĩnh, không chuyển động
-    } else {
-      raf = requestAnimationFrame(loop);
-    }
+    if (reduce) draw(false);
+    else raf = requestAnimationFrame(loop);
+
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
@@ -138,7 +186,7 @@ function FlowFieldBackground({ isDarkMode }: { isDarkMode: boolean }) {
     <canvas
       ref={ref}
       aria-hidden
-      className="fixed inset-0 z-0 pointer-events-none opacity-60"
+      className="fixed inset-0 z-0 pointer-events-none opacity-70"
     />
   );
 }
@@ -760,16 +808,19 @@ const INTEGRITY_CSS = `
     transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
   }
 
-  /* Góc gần vuông, viền mảnh, phẳng: không bóng, không gradient */
-  .integrity-ui :where(button, input, select, textarea, label) { border-radius: 2px; }
-  .integrity-ui div[class*="border"] { border-radius: 2px; }
+  /* Góc bo nhẹ, bóng rất mờ, không gradient */
+  .integrity-ui :where(button, input, select, textarea, label) { border-radius: 4px; }
+  .integrity-ui div[class*="border"] { border-radius: 4px; }
   .integrity-ui .app-header,
   .integrity-ui .app-header div[class*="border"] { border-radius: 0; }
-  .integrity-ui .app-header div[class*="border"] { border-radius: 2px; }
+  .integrity-ui .app-header div[class*="border"] { border-radius: 4px; }
   .integrity-ui button[class*="border-b"] { border-radius: 0; }
-  .integrity-ui video { border-radius: 2px; }
-  .integrity-ui [class*="bg-gradient"] { background-image: none !important; }
-  .integrity-ui * { box-shadow: none !important; }
+  .integrity-ui video { border-radius: 4px; }
+  .integrity-ui div[class*="bg-[#073642]"],
+  .integrity-ui div[class*="bg-[#eee8d5]"] {
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 6px 16px -12px rgba(0, 0, 0, 0.25);
+  }
+  .integrity-ui .app-header { box-shadow: 0 4px 12px -10px rgba(0, 0, 0, 0.35); }
 
   /* Phản hồi khi di chuột / bấm */
   .integrity-ui [class*="cursor-pointer"]:hover { transform: translateY(-1px); }
@@ -2389,7 +2440,7 @@ export default function SyntheticVideoDetector() {
       }
     >
       <style>{INTEGRITY_CSS}</style>
-      <FlowFieldBackground isDarkMode={isDarkMode} />
+      <NeuralBackground isDarkMode={isDarkMode} />
 
       <header
         className={`app-header border-b ${theme.border} ${theme.bgCard} sticky top-0 z-50 transition-colors duration-500`}

@@ -760,24 +760,19 @@ const INTEGRITY_CSS = `
     transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
   }
 
-  /* Bo góc mềm + viền mảnh, rõ phân cấp */
-  .integrity-ui :where(button, input, select, textarea, label) { border-radius: 8px; }
-  .integrity-ui div[class*="border"] { border-radius: 12px; }
+  /* Góc gần vuông, viền mảnh, phẳng: không bóng, không gradient */
+  .integrity-ui :where(button, input, select, textarea, label) { border-radius: 2px; }
+  .integrity-ui div[class*="border"] { border-radius: 2px; }
   .integrity-ui .app-header,
   .integrity-ui .app-header div[class*="border"] { border-radius: 0; }
-  .integrity-ui .app-header div[class*="border"] { border-radius: 10px; }
-  .integrity-ui button[class*="border-b"] { border-radius: 8px 8px 0 0; }
-  .integrity-ui video { border-radius: 10px; }
-
-  /* Thẻ nổi nhẹ */
-  .integrity-ui div[class*="bg-[#073642]"],
-  .integrity-ui div[class*="bg-[#eee8d5]"] {
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 14px 32px -18px rgba(0, 0, 0, 0.35);
-  }
-  .integrity-ui .app-header { box-shadow: 0 8px 24px -16px rgba(0, 0, 0, 0.45); }
+  .integrity-ui .app-header div[class*="border"] { border-radius: 2px; }
+  .integrity-ui button[class*="border-b"] { border-radius: 0; }
+  .integrity-ui video { border-radius: 2px; }
+  .integrity-ui [class*="bg-gradient"] { background-image: none !important; }
+  .integrity-ui * { box-shadow: none !important; }
 
   /* Phản hồi khi di chuột / bấm */
-  .integrity-ui [class*="cursor-pointer"]:hover { transform: translateY(-2px); }
+  .integrity-ui [class*="cursor-pointer"]:hover { transform: translateY(-1px); }
   .integrity-ui button:not(:disabled):hover { filter: brightness(1.07); }
   .integrity-ui button:not(:disabled):active { transform: scale(0.98); }
   .integrity-ui :focus-visible { outline: 2px solid #268bd2; outline-offset: 2px; }

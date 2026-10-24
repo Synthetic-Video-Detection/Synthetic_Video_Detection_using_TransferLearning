@@ -203,6 +203,7 @@ type VideoResult = {
   result: AnalysisResult;
   scores: ScorePoint[];
   error?: string;
+  processingTime?: number; // giây: thời gian model xử lý xong video này
 };
 
 type BatchItem = {
@@ -233,6 +234,30 @@ function classifyWithThreshold(result: AnalysisResult, threshold: number) {
   return { isSynthetic, confidence, probability_ai: p };
 }
 
+function formatDuration(sec: number): string {
+  if (!Number.isFinite(sec) || sec < 0) return "—";
+  if (sec < 60) return `${sec.toFixed(2)} s`;
+  const m = Math.floor(sec / 60);
+  const r = sec - m * 60;
+  return `${m} ${t("phút", "min")} ${r.toFixed(1)} s`;
+}
+
+// Đồng hồ chạy trực tiếp trong lúc video đang được xử lý.
+function LiveTimer({ className = "" }: { className?: string }) {
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    const start = performance.now();
+    const id = setInterval(
+      () => setElapsed((performance.now() - start) / 1000),
+      100
+    );
+    return () => clearInterval(id);
+  }, []);
+
+  return <span className={`tabular-nums ${className}`}>{formatDuration(elapsed)}</span>;
+}
+
 // Backend trả về 1 object phẳng: {label, probability_ai, confidence, scores}.
 function parseBackendResult(r: any): VideoResult {
   if (!r || r.error) {
@@ -249,6 +274,10 @@ function parseBackendResult(r: any): VideoResult {
       confidence: r.confidence,
       probability_ai: r.probability_ai,
     },
+    processingTime:
+      typeof r.processing_time_sec === "number"
+        ? r.processing_time_sec
+        : undefined,
     scores: Array.isArray(r.scores)
       ? r.scores.map((p: any) => ({
           time: Number(p.time),
@@ -259,6 +288,7 @@ function parseBackendResult(r: any): VideoResult {
 }
 
 async function postToBackend(path: string, formData: FormData): Promise<VideoResult> {
+  const startedAt = performance.now();
   const response = await fetch(`${NGROK_BASE}${path}`, {
     method: "POST",
     body: formData,
@@ -276,7 +306,13 @@ async function postToBackend(path: string, formData: FormData): Promise<VideoRes
     throw new Error(message);
   }
 
-  return parseBackendResult(await response.json());
+  const parsed = parseBackendResult(await response.json());
+  // Ưu tiên thời gian model do backend đo; nếu backend cũ chưa trả về thì dùng
+  // tổng thời gian chờ phía trình duyệt (gồm cả upload).
+  if (parsed.processingTime === undefined && !parsed.error) {
+    parsed.processingTime = (performance.now() - startedAt) / 1000;
+  }
+  return parsed;
 }
 
 async function analyzeVideoFile(file: File): Promise<VideoResult> {
@@ -350,6 +386,7 @@ function generateMockResult(
           probability_ai: Math.round(probability_ai * 10000) / 10000,
         },
         scores,
+        processingTime: Math.round(delay) / 1000,
       });
     }, delay);
   });
@@ -577,6 +614,7 @@ function buildResultsCsv(
     "synthetic_score",
     "ground_truth_label",
     "match",
+    "processing_time_sec",
   ];
 
   const rows: string[] = [];
@@ -604,6 +642,9 @@ function buildResultsCsv(
         classified.probability_ai.toFixed(4),
         groundTruthLabel,
         match,
+        it.result.processingTime !== undefined
+          ? it.result.processingTime.toFixed(2)
+          : "",
       ].join(",")
     );
   });
@@ -707,10 +748,12 @@ function ResultSummary({
   result,
   theme,
   threshold,
+  processingTime,
 }: {
   result: AnalysisResult;
   theme: Theme;
   threshold: number;
+  processingTime?: number;
 }) {
   const classified = classifyWithThreshold(result, threshold);
   const prob = classified.probability_ai;
@@ -782,6 +825,18 @@ function ResultSummary({
             {prob.toFixed(4)}
           </span>
         </div>
+
+        {processingTime !== undefined && (
+          <div className={`flex justify-between py-2 border-b ${theme.border}`}>
+            <span className={`${theme.textMain} flex items-center gap-1.5`}>
+              <Clock className="w-3.5 h-3.5 text-[#268bd2]" />
+              {t("Thời gian xử lý:", "Processing time:")}
+            </span>
+            <span className={`${theme.textHeading} tabular-nums font-semibold`}>
+              {formatDuration(processingTime)}
+            </span>
+          </div>
+        )}
 
         <div className={`flex justify-between py-2 border-b ${theme.border}`}>
           <span className={theme.textMain}>{t("Threshold đang dùng:", "Active threshold:")}</span>
@@ -1036,6 +1091,12 @@ function BatchGridCard({
             {classified.isSynthetic ? "AI" : "Real"} ·{" "}
             {(classified.probability_ai * 100).toFixed(0)}%
           </span>
+
+          {activeEntry?.processingTime !== undefined && (
+            <span className="text-[10px] text-white/70 tabular-nums">
+              {activeEntry.processingTime.toFixed(1)}s
+            </span>
+          )}
 
           {hasGroundTruth &&
             (isCorrect ? (
@@ -1681,6 +1742,7 @@ function DashboardView({
                   result={activeBatchEntry.result}
                   theme={theme}
                   threshold={threshold}
+                  processingTime={activeBatchEntry.processingTime}
                 />
 
                 {activeBatchEntry.scores.length > 0 && (
@@ -2554,6 +2616,10 @@ export default function SyntheticVideoDetector() {
                             <p className="text-xs text-center text-[#268bd2] animate-pulse">
                               {t("Extracting Spatial & Temporal Features...", "Extracting spatial & temporal features...")}
                             </p>
+
+                            <p className={`text-xs text-center ${theme.textSub}`}>
+                              {t("Đã chạy:", "Elapsed:")} <LiveTimer />
+                            </p>
                           </div>
                         )}
 
@@ -2571,6 +2637,7 @@ export default function SyntheticVideoDetector() {
                             result={singleResult}
                             theme={theme}
                             threshold={threshold}
+                            processingTime={singleEntry?.processingTime}
                           />
                         )}
                       </div>
@@ -2906,6 +2973,10 @@ export default function SyntheticVideoDetector() {
                             <p className="text-xs text-center text-[#268bd2] animate-pulse">
                               {t("Extracting Spatial & Temporal Features...", "Extracting spatial & temporal features...")}
                             </p>
+
+                            <p className={`text-xs text-center ${theme.textSub}`}>
+                              {t("Đã chạy:", "Elapsed:")} <LiveTimer />
+                            </p>
                           </div>
                         )}
 
@@ -2935,6 +3006,7 @@ export default function SyntheticVideoDetector() {
                               result={activeBatchEntry.result}
                               theme={theme}
                               threshold={threshold}
+                              processingTime={activeBatchEntry.processingTime}
                             />
                           )}
                       </div>

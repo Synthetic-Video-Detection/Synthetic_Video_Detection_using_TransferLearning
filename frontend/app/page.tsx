@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useMemo, useState, useRef, useEffect } from "react";
+import React, { useMemo, useState, useRef, useEffect } from "react";
 import { Baskervville, Source_Serif_4 } from "next/font/google";
 import {
   Upload,
@@ -23,8 +23,6 @@ import {
   FlaskConical,
   SlidersHorizontal,
   Download,
-  Database,
-  AlertTriangle,
   Link2,
   Languages,
 } from "lucide-react";
@@ -201,14 +199,7 @@ type AnalysisResult = {
 
 type BatchStatus = "queued" | "processing" | "done" | "error";
 
-type WeightInfo = {
-  id: string;
-  name: string;
-  updated_at: number;
-  ready: boolean;
-};
-
-type WeightResult = {
+type VideoResult = {
   result: AnalysisResult;
   scores: ScorePoint[];
   error?: string;
@@ -221,13 +212,12 @@ type BatchItem = {
   sourceUrl?: string;
   previewUrl?: string;
   status: BatchStatus;
-  resultsByWeight?: Record<string, WeightResult>;
+  result?: VideoResult;
   error?: string;
 };
 
 const DEFAULT_THRESHOLD = 0.5;
 const NGROK_BASE = "https://derived-expanse-roundish.ngrok-free.dev";
-const WEIGHTS_POLL_INTERVAL_MS = 8000;
 
 let idCounter = 0;
 
@@ -243,144 +233,62 @@ function classifyWithThreshold(result: AnalysisResult, threshold: number) {
   return { isSynthetic, confidence, probability_ai: p };
 }
 
-function formatWeightTime(unixSeconds: number): string {
-  if (!unixSeconds) return "";
-  const d = new Date(unixSeconds * 1000);
-  return d.toLocaleString(CURRENT_LANG === "vi" ? "vi-VN" : "en-US", {
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+// Backend trả về 1 object phẳng: {label, probability_ai, confidence, scores}.
+function parseBackendResult(r: any): VideoResult {
+  if (!r || r.error) {
+    return {
+      result: { isSynthetic: false, confidence: 0, probability_ai: 0 },
+      scores: [],
+      error: r?.error ?? t("Không có kết quả trả về.", "No result was returned."),
+    };
+  }
+
+  return {
+    result: {
+      isSynthetic: r.label,
+      confidence: r.confidence,
+      probability_ai: r.probability_ai,
+    },
+    scores: Array.isArray(r.scores)
+      ? r.scores.map((p: any) => ({
+          time: Number(p.time),
+          score: Number(p.score),
+        }))
+      : [],
+  };
 }
 
-async function fetchAvailableWeights(): Promise<WeightInfo[]> {
-  const response = await fetch(`${NGROK_BASE}/weights`, {
-    headers: { "ngrok-skip-browser-warning": "true" },
+async function postToBackend(path: string, formData: FormData): Promise<VideoResult> {
+  const response = await fetch(`${NGROK_BASE}${path}`, {
+    method: "POST",
+    body: formData,
+    headers: {
+      "ngrok-skip-browser-warning": "true",
+    },
   });
 
-  if (!response.ok) throw new Error(`Server returned status: ${response.status}`);
+  if (!response.ok) {
+    let message = `Server returned status: ${response.status}`;
+    try {
+      const errBody = await response.json();
+      if (errBody?.error) message = errBody.error;
+    } catch {}
+    throw new Error(message);
+  }
 
-  const data = await response.json();
-  return Array.isArray(data.weights) ? data.weights : [];
+  return parseBackendResult(await response.json());
 }
 
-async function analyzeVideoFile(
-  file: File,
-  weightIds: string[]
-): Promise<Record<string, WeightResult>> {
+async function analyzeVideoFile(file: File): Promise<VideoResult> {
   const formData = new FormData();
   formData.append("file", file);
-  formData.append("weights", weightIds.join(","));
-
-  const response = await fetch(`${NGROK_BASE}/upload/`, {
-    method: "POST",
-    body: formData,
-    headers: {
-      "ngrok-skip-browser-warning": "true",
-    },
-  });
-
-  if (!response.ok) {
-    let message = `Server returned status: ${response.status}`;
-    try {
-      const errBody = await response.json();
-      if (errBody?.error) message = errBody.error;
-    } catch {}
-    throw new Error(message);
-  }
-
-  const data = await response.json();
-  const rawResults: Record<string, any> = data.results ?? {};
-  const out: Record<string, WeightResult> = {};
-
-  for (const wid of weightIds) {
-    const r = rawResults[wid];
-
-    if (!r || r.error) {
-      out[wid] = {
-        result: { isSynthetic: false, confidence: 0, probability_ai: 0 },
-        scores: [],
-        error: r?.error ?? t("Không có kết quả trả về cho weight này.", "No result was returned for this weight."),
-      };
-      continue;
-    }
-
-    out[wid] = {
-      result: {
-        isSynthetic: r.label,
-        confidence: r.confidence,
-        probability_ai: r.probability_ai,
-      },
-      scores: Array.isArray(r.scores)
-        ? r.scores.map((p: any) => ({
-            time: Number(p.time),
-            score: Number(p.score),
-          }))
-        : [],
-    };
-  }
-
-  return out;
+  return postToBackend("/upload/", formData);
 }
 
-async function analyzeVideoUrl(
-  url: string,
-  weightIds: string[]
-): Promise<Record<string, WeightResult>> {
+async function analyzeVideoUrl(url: string): Promise<VideoResult> {
   const formData = new FormData();
   formData.append("url", url);
-  formData.append("weights", weightIds.join(","));
-
-  const response = await fetch(`${NGROK_BASE}/upload_url/`, {
-    method: "POST",
-    body: formData,
-    headers: {
-      "ngrok-skip-browser-warning": "true",
-    },
-  });
-
-  if (!response.ok) {
-    let message = `Server returned status: ${response.status}`;
-    try {
-      const errBody = await response.json();
-      if (errBody?.error) message = errBody.error;
-    } catch {}
-    throw new Error(message);
-  }
-
-  const data = await response.json();
-  const rawResults: Record<string, any> = data.results ?? {};
-  const out: Record<string, WeightResult> = {};
-
-  for (const wid of weightIds) {
-    const r = rawResults[wid];
-
-    if (!r || r.error) {
-      out[wid] = {
-        result: { isSynthetic: false, confidence: 0, probability_ai: 0 },
-        scores: [],
-        error: r?.error ?? t("Không có kết quả trả về cho weight này.", "No result was returned for this weight."),
-      };
-      continue;
-    }
-
-    out[wid] = {
-      result: {
-        isSynthetic: r.label,
-        confidence: r.confidence,
-        probability_ai: r.probability_ai,
-      },
-      scores: Array.isArray(r.scores)
-        ? r.scores.map((p: any) => ({
-            time: Number(p.time),
-            score: Number(p.score),
-          }))
-        : [],
-    };
-  }
-
-  return out;
+  return postToBackend("/upload_url/", formData);
 }
 
 function stringSeed(str: string): number {
@@ -401,34 +309,15 @@ function mulberry32(seed: number) {
   };
 }
 
-function generateMockWeightsList(): WeightInfo[] {
-  const now = Date.now() / 1000;
-  return [
-    {
-      id: "mock_v1",
-      name: "CLIP-DinoResidual-BiLSTM (v1, giả lập)",
-      updated_at: now - 3600,
-      ready: true,
-    },
-    {
-      id: "mock_v2",
-      name: "CLIP-DinoResidual-BiLSTM (v2, giả lập)",
-      updated_at: now - 300,
-      ready: true,
-    },
-  ];
-}
-
 function generateMockResult(
   key: string,
-  weightId: string,
   groundTruth?: number
-): Promise<WeightResult> {
+): Promise<VideoResult> {
   return new Promise((resolve) => {
     const delay = 350 + Math.random() * 900;
 
     setTimeout(() => {
-      const rng = mulberry32(stringSeed(`${key}::${weightId}`));
+      const rng = mulberry32(stringSeed(key));
 
       let base: number;
 
@@ -464,20 +353,6 @@ function generateMockResult(
       });
     }, delay);
   });
-}
-
-async function generateMockResultsForWeights(
-  key: string,
-  weightIds: string[],
-  groundTruth?: number
-): Promise<Record<string, WeightResult>> {
-  const entries = await Promise.all(
-    weightIds.map(
-      async (wid) => [wid, await generateMockResult(key, wid, groundTruth)] as const
-    )
-  );
-
-  return Object.fromEntries(entries);
 }
 
 function parseCsv(text: string): Record<string, string>[] {
@@ -587,25 +462,19 @@ type Metrics = {
 function computeMetrics(
   items: BatchItem[],
   labelMap: Map<string, number>,
-  threshold: number,
-  weightId: string | null
+  threshold: number
 ): Metrics | null {
-  if (!weightId) return null;
-
   const evaluable = items
     .filter(
       (it) =>
         it.status === "done" &&
-        it.resultsByWeight?.[weightId] &&
-        !it.resultsByWeight[weightId].error &&
+        it.result &&
+        !it.result.error &&
         labelMap.has(it.name)
     )
     .map((it) => {
       const truth = labelMap.get(it.name) as number;
-      const classified = classifyWithThreshold(
-        it.resultsByWeight![weightId].result,
-        threshold
-      );
+      const classified = classifyWithThreshold(it.result!.result, threshold);
       const pred = classified.isSynthetic ? 1 : 0;
       const score = classified.probability_ai;
 
@@ -704,7 +573,6 @@ function buildResultsCsv(
 ): string {
   const header = [
     "name",
-    "weight",
     "predicted_label",
     "synthetic_score",
     "ground_truth_label",
@@ -714,39 +582,30 @@ function buildResultsCsv(
   const rows: string[] = [];
 
   items.forEach((it) => {
-    if (it.status !== "done" || !it.resultsByWeight) return;
+    if (it.status !== "done" || !it.result || it.result.error) return;
 
-    Object.entries(it.resultsByWeight).forEach(([wid, entry]) => {
-      if (entry.error) return;
+    const classified = classifyWithThreshold(it.result.result, threshold);
+    const predictedLabel = classified.isSynthetic ? "AI" : "Real";
+    const groundTruthRaw = labelMap.get(it.name);
+    const groundTruthLabel =
+      groundTruthRaw === undefined ? "" : groundTruthRaw === 1 ? "AI" : "Real";
 
-      const classified = classifyWithThreshold(entry.result, threshold);
-      const predictedLabel = classified.isSynthetic ? "AI" : "Real";
-      const groundTruthRaw = labelMap.get(it.name);
-      const groundTruthLabel =
-        groundTruthRaw === undefined
-          ? ""
-          : groundTruthRaw === 1
-          ? "AI"
-          : "Real";
+    const match =
+      groundTruthRaw === undefined
+        ? ""
+        : (classified.isSynthetic ? 1 : 0) === groundTruthRaw
+        ? "correct"
+        : "incorrect";
 
-      const match =
-        groundTruthRaw === undefined
-          ? ""
-          : (classified.isSynthetic ? 1 : 0) === groundTruthRaw
-          ? "correct"
-          : "incorrect";
-
-      rows.push(
-        [
-          escapeCsvField(it.name),
-          escapeCsvField(wid),
-          predictedLabel,
-          classified.probability_ai.toFixed(4),
-          groundTruthLabel,
-          match,
-        ].join(",")
-      );
-    });
+    rows.push(
+      [
+        escapeCsvField(it.name),
+        predictedLabel,
+        classified.probability_ai.toFixed(4),
+        groundTruthLabel,
+        match,
+      ].join(",")
+    );
   });
 
   return [header.join(","), ...rows].join("\r\n");
@@ -765,7 +624,7 @@ function downloadResultsCsv(
   const a = document.createElement("a");
 
   a.href = url;
-  a.download = `ket_qua_tat_ca_weight_threshold_${Math.round(threshold * 100)}.csv`;
+  a.download = `ket_qua_threshold_${Math.round(threshold * 100)}.csv`;
 
   document.body.appendChild(a);
   a.click();
@@ -1067,65 +926,10 @@ function MetricBox({
   );
 }
 
-function WeightResultTabs({
-  weights,
-  resultsByWeight,
-  activeWeightId,
-  onSelect,
-  theme,
-}: {
-  weights: WeightInfo[];
-  resultsByWeight: Record<string, WeightResult>;
-  activeWeightId: string | null;
-  onSelect: (id: string) => void;
-  theme: Theme;
-}) {
-  const knownIds = weights.map((w) => w.id);
-  const extraIds = Object.keys(resultsByWeight).filter(
-    (id) => !knownIds.includes(id)
-  );
-  const orderedIds = [
-    ...knownIds.filter((id) => resultsByWeight[id]),
-    ...extraIds,
-  ];
-
-  if (orderedIds.length === 0) return null;
-
-  return (
-    <div className="flex flex-wrap items-center gap-2 mb-4">
-      {orderedIds.map((id) => {
-        const info = weights.find((w) => w.id === id);
-        const entry = resultsByWeight[id];
-        const hasError = !!entry?.error;
-        const isActive = activeWeightId === id;
-
-        return (
-          <button
-            key={id}
-            onClick={() => onSelect(id)}
-            className={`text-xs px-3 py-1.5 border flex items-center gap-1.5 transition-all ${
-              isActive
-                ? `${theme.bgMain} border-[#268bd2] ${theme.textHeading} font-bold`
-                : `${theme.bgCard} ${theme.border} ${theme.textSub} hover:opacity-80`
-            }`}
-            title={info?.name ?? id}
-          >
-            {hasError && (
-              <span className="w-1.5 h-1.5 bg-[#dc322f] shrink-0" />
-            )}
-            <span className="truncate max-w-[160px]">{info?.name ?? id}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 function BatchGridCard({
   item,
   groundTruth,
   threshold,
-  activeWeightId,
   isSelected,
   onSelect,
   onRemove,
@@ -1134,16 +938,12 @@ function BatchGridCard({
   item: BatchItem;
   groundTruth: number | undefined;
   threshold: number;
-  activeWeightId: string | null;
   isSelected: boolean;
   onSelect: () => void;
   onRemove: () => void;
   disableRemove: boolean;
 }) {
-  const activeEntry =
-    item.status === "done" && activeWeightId
-      ? item.resultsByWeight?.[activeWeightId]
-      : undefined;
+  const activeEntry = item.status === "done" ? item.result : undefined;
 
   const classified =
     activeEntry && !activeEntry.error
@@ -1157,7 +957,7 @@ function BatchGridCard({
       ? predicted === groundTruth
       : undefined;
 
-  const missingForActiveWeight = item.status === "done" && !classified;
+  const missingResult = item.status === "done" && !classified;
 
   let borderColor = "#0a4a58";
 
@@ -1246,10 +1046,10 @@ function BatchGridCard({
         </div>
       )}
 
-      {missingForActiveWeight && (
+      {missingResult && (
         <div className="absolute bottom-0 inset-x-0 px-2 py-1 bg-black/75">
           <span className="text-[10px] text-[#93a1a1]">
-            {t("Chưa có KQ cho weight này", "No result for this weight")}
+            {t("Chưa có kết quả", "No result yet")}
           </span>
         </div>
       )}
@@ -1264,13 +1064,6 @@ function DashboardView({
   setMockMode,
   threshold,
   setThreshold,
-  availableWeights,
-  selectedWeightIds,
-  toggleWeightSelected,
-  activeWeightId,
-  setActiveWeightId,
-  weightsError,
-  loadWeights,
   batchItems,
   labelMap,
   metrics,
@@ -1307,13 +1100,6 @@ function DashboardView({
   setMockMode: (v: boolean) => void;
   threshold: number;
   setThreshold: (v: number) => void;
-  availableWeights: WeightInfo[];
-  selectedWeightIds: string[];
-  toggleWeightSelected: (id: string) => void;
-  activeWeightId: string | null;
-  setActiveWeightId: (id: string) => void;
-  weightsError: string | null;
-  loadWeights: () => void;
   batchItems: BatchItem[];
   labelMap: Map<string, number>;
   metrics: ReturnType<typeof computeMetrics>;
@@ -1346,7 +1132,7 @@ function DashboardView({
   selectedBatchId: string | null;
   setSelectedBatchId: (id: string | null) => void;
   selectedBatchItem: BatchItem | null;
-  activeBatchEntry: WeightResult | undefined;
+  activeBatchEntry: VideoResult | undefined;
   batchVideoRef: React.RefObject<HTMLVideoElement | null>;
   batchCurrentTime: number;
   handleBatchTimeUpdate: () => void;
@@ -1355,9 +1141,7 @@ function DashboardView({
   const doneItems = batchItems.filter((it) => it.status === "done");
 
   const aiCount = doneItems.filter((it) => {
-    const entry = activeWeightId
-      ? it.resultsByWeight?.[activeWeightId]
-      : undefined;
+    const entry = it.result;
 
     return (
       entry &&
@@ -1385,9 +1169,7 @@ function DashboardView({
     }
 
     if (labelFilter !== "all") {
-      const entry = activeWeightId
-        ? it.resultsByWeight?.[activeWeightId]
-        : undefined;
+      const entry = it.result;
 
       if (!entry || entry.error) return false;
 
@@ -1472,71 +1254,7 @@ function DashboardView({
         </label>
       </div>
 
-      <div
-        className={`${theme.bgCard} border ${theme.border} p-4 mb-4`}
-      >
-        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-          <span
-            className={`text-xs uppercase tracking-wider ${theme.textSub} flex items-center gap-1.5`}
-          >
-            <Database className="w-3.5 h-3.5 text-[#6c71c4]" /> Weight
-          </span>
-
-          <button
-            onClick={loadWeights}
-            className={`text-[11px] px-2 py-1 border ${theme.border} ${theme.btnCancel} flex items-center gap-1`}
-          >
-            <RefreshCw className="w-3 h-3" /> {t("Làm mới", "Refresh")}
-          </button>
-        </div>
-
-        {weightsError && (
-          <p className="text-[11px] text-[#dc322f] mb-2">{weightsError}</p>
-        )}
-
-        <div className="flex flex-wrap gap-2">
-          {availableWeights.map((w) => (
-            <label
-              key={w.id}
-              className={`text-xs px-2.5 py-1.5 border cursor-pointer flex items-center gap-1.5 transition-colors ${
-                theme.border
-              } ${
-                selectedWeightIds.includes(w.id)
-                  ? `${theme.bgMain} font-bold ${theme.textHeading}`
-                  : `${theme.inputBg} ${theme.textSub}`
-              } ${!w.ready ? "opacity-50" : ""}`}
-            >
-              <input
-                type="checkbox"
-                checked={selectedWeightIds.includes(w.id)}
-                onChange={() => toggleWeightSelected(w.id)}
-                disabled={!w.ready}
-                className="accent-[#859900]"
-              />
-              {w.name}
-            </label>
-          ))}
-        </div>
-
-        <WeightResultTabs
-          weights={availableWeights}
-          resultsByWeight={Object.fromEntries(
-            batchItems.flatMap((it) =>
-              it.resultsByWeight
-                ? Object.keys(it.resultsByWeight).map((k) => [
-                    k,
-                    it.resultsByWeight![k],
-                  ])
-                : []
-            )
-          )}
-          activeWeightId={activeWeightId}
-          onSelect={setActiveWeightId}
-          theme={theme}
-        />
-      </div>
-
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
         <MetricBox
           label={t("Tổng video", "Total videos")}
           value={String(batchItems.length)}
@@ -1572,11 +1290,27 @@ function DashboardView({
           theme={theme}
         />
         <MetricBox
+          label="AUROC (CSV)"
+          value={
+            metrics && metrics.auroc != null ? metrics.auroc.toFixed(3) : "N/A"
+          }
+          theme={theme}
+        />
+        <MetricBox
           label={t("Đang xử lý / lỗi", "Processing / errors")}
           value={`${queueCount} / ${errorCount}`}
           theme={theme}
         />
       </div>
+
+      {(!metrics || metrics.auroc == null) && (
+        <p className={`text-[11px] ${theme.textSub} mb-4`}>
+          {t(
+            "AUROC và Accuracy cần file nhãn CSV, và AUROC cần có cả video Real lẫn AI trong tập đã chạy.",
+            "AUROC and Accuracy need a CSV label file, and AUROC needs both Real and AI videos among the processed ones."
+          )}
+        </p>
+      )}
 
       <div
         className={`${theme.bgCard} border ${theme.border} p-3 mb-2 flex flex-wrap items-center gap-2`}
@@ -1622,7 +1356,7 @@ function DashboardView({
 
         <button
           onClick={runAllBatch}
-          disabled={isBatchRunning || selectedWeightIds.length === 0}
+          disabled={isBatchRunning}
           className="ml-auto text-xs font-bold px-4 py-2 border bg-[#859900] hover:brightness-110 text-[#002b36] disabled:opacity-50 flex items-center gap-1.5"
         >
           {isBatchRunning ? (
@@ -1753,9 +1487,7 @@ function DashboardView({
               )}
 
               {filteredItems.map((it) => {
-                const entry = activeWeightId
-                  ? it.resultsByWeight?.[activeWeightId]
-                  : undefined;
+                const entry = it.result;
 
                 const classified =
                   entry && !entry.error
@@ -1943,16 +1675,6 @@ function DashboardView({
               </p>
             )}
 
-            {selectedBatchItem.resultsByWeight && (
-              <WeightResultTabs
-                weights={availableWeights}
-                resultsByWeight={selectedBatchItem.resultsByWeight}
-                activeWeightId={activeWeightId}
-                onSelect={setActiveWeightId}
-                theme={theme}
-              />
-            )}
-
             {activeBatchEntry && !activeBatchEntry.error && (
               <>
                 <ResultSummary
@@ -1986,11 +1708,6 @@ function DashboardView({
               </p>
             )}
 
-            {selectedBatchItem.status === "done" && !activeWeightId && (
-              <p className={`text-xs ${theme.textSub} mt-2`}>
-                {t("Chọn 1 weight ở trên để xem kết quả chi tiết.", "Select a weight above to see detailed results.")}
-              </p>
-            )}
           </div>
         </>
       )}
@@ -2029,21 +1746,13 @@ export default function SyntheticVideoDetector() {
   const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD);
   const [mockMode, setMockMode] = useState(false);
 
-  const [availableWeights, setAvailableWeights] = useState<WeightInfo[]>([]);
-  const [selectedWeightIds, setSelectedWeightIds] = useState<string[]>([]);
-  const [activeWeightId, setActiveWeightId] = useState<string | null>(null);
-  const [weightsError, setWeightsError] = useState<string | null>(null);
-  const hasAutoSelectedRef = useRef(false);
-
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [singleSourceMode, setSingleSourceMode] = useState<"file" | "url">(
     "file"
   );
   const [singleUrlInput, setSingleUrlInput] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [singleResultsByWeight, setSingleResultsByWeight] = useState<
-    Record<string, WeightResult>
-  >({});
+  const [singleEntry, setSingleEntry] = useState<VideoResult | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -2063,50 +1772,6 @@ export default function SyntheticVideoDetector() {
     fileName: string;
     totalRows: number;
   } | null>(null);
-
-  const loadWeights = useCallback(async () => {
-    try {
-      const list = mockMode
-        ? generateMockWeightsList()
-        : await fetchAvailableWeights();
-
-      setAvailableWeights(list);
-      setWeightsError(null);
-    } catch (e: any) {
-      setWeightsError(
-        t("Không lấy được danh sách weight từ backend. Kiểm tra lại URL Ngrok / Colab có đang chạy không.", "Could not load the weight list from the backend. Check that the Ngrok URL / Colab is running.")
-      );
-    }
-  }, [mockMode]);
-
-  useEffect(() => {
-    loadWeights();
-    const interval = setInterval(loadWeights, WEIGHTS_POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [loadWeights]);
-
-  useEffect(() => {
-    const availableIds = new Set(availableWeights.map((w) => w.id));
-
-    setSelectedWeightIds((prev) =>
-      prev.filter((id) => availableIds.has(id))
-    );
-
-    if (!hasAutoSelectedRef.current && availableWeights.length > 0) {
-      setSelectedWeightIds(
-        availableWeights.filter((w) => w.ready).map((w) => w.id)
-      );
-      hasAutoSelectedRef.current = true;
-    }
-  }, [availableWeights]);
-
-  const toggleWeightSelected = (id: string) => {
-    setSelectedWeightIds((prev) =>
-      prev.includes(id)
-        ? prev.filter((w) => w !== id)
-        : [...prev, id]
-    );
-  };
 
   useEffect(() => {
     if (!selectedFile) {
@@ -2153,7 +1818,7 @@ export default function SyntheticVideoDetector() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       setSelectedFile(e.target.files[0]);
-      setSingleResultsByWeight({});
+      setSingleEntry(null);
     }
   };
 
@@ -2162,35 +1827,19 @@ export default function SyntheticVideoDetector() {
     const trimmedUrl = singleUrlInput.trim();
 
     if (isUrlMode ? !trimmedUrl : !selectedFile) return;
-    if (selectedWeightIds.length === 0) return;
 
     setIsAnalyzing(true);
-    setSingleResultsByWeight({});
+    setSingleEntry(null);
     setCurrentTime(0);
 
     try {
-      const resultsMap = isUrlMode
-        ? mockMode
-          ? await generateMockResultsForWeights(
-              trimmedUrl,
-              selectedWeightIds
-            )
-          : await analyzeVideoUrl(trimmedUrl, selectedWeightIds)
-        : mockMode
-        ? await generateMockResultsForWeights(
-            selectedFile!.name,
-            selectedWeightIds
-          )
-        : await analyzeVideoFile(selectedFile!, selectedWeightIds);
+      const entry = mockMode
+        ? await generateMockResult(isUrlMode ? trimmedUrl : selectedFile!.name)
+        : isUrlMode
+        ? await analyzeVideoUrl(trimmedUrl)
+        : await analyzeVideoFile(selectedFile!);
 
-      setSingleResultsByWeight(resultsMap);
-
-      const firstOk =
-        selectedWeightIds.find(
-          (id) => resultsMap[id] && !resultsMap[id].error
-        ) ?? selectedWeightIds[0];
-
-      setActiveWeightId(firstOk ?? null);
+      setSingleEntry(entry);
     } catch (error) {
       console.error("API Upload Error:", error);
       alert(
@@ -2308,10 +1957,7 @@ export default function SyntheticVideoDetector() {
     setSelectedBatchId(null);
   };
 
-  const processOneBatchItem = async (
-    item: BatchItem,
-    weightIds: string[]
-  ) => {
+  const processOneBatchItem = async (item: BatchItem) => {
     const { id } = item;
 
     setBatchItems((prev) =>
@@ -2325,21 +1971,15 @@ export default function SyntheticVideoDetector() {
     setSelectedBatchId(id);
 
     try {
-      const resultsMap = mockMode
-        ? await generateMockResultsForWeights(
-            item.name,
-            weightIds,
-            labelMap.get(item.name)
-          )
+      const entry = mockMode
+        ? await generateMockResult(item.name, labelMap.get(item.name))
         : item.file
-        ? await analyzeVideoFile(item.file, weightIds)
-        : await analyzeVideoUrl(item.sourceUrl as string, weightIds);
+        ? await analyzeVideoFile(item.file)
+        : await analyzeVideoUrl(item.sourceUrl as string);
 
       setBatchItems((prev) =>
         prev.map((it) =>
-          it.id === id
-            ? { ...it, status: "done", resultsByWeight: resultsMap }
-            : it
+          it.id === id ? { ...it, status: "done", result: entry } : it
         )
       );
     } catch (err: any) {
@@ -2360,7 +2000,7 @@ export default function SyntheticVideoDetector() {
   };
 
   const runAllBatch = async () => {
-    if (isBatchRunning || selectedWeightIds.length === 0) return;
+    if (isBatchRunning) return;
 
     const queue = batchItems.filter(
       (it) => it.status === "queued" || it.status === "error"
@@ -2371,7 +2011,7 @@ export default function SyntheticVideoDetector() {
     setIsBatchRunning(true);
 
     for (const item of queue) {
-      await processOneBatchItem(item, selectedWeightIds);
+      await processOneBatchItem(item);
     }
 
     setIsBatchRunning(false);
@@ -2404,30 +2044,16 @@ export default function SyntheticVideoDetector() {
   );
 
   const metrics = useMemo(
-    () => computeMetrics(batchItems, labelMap, threshold, activeWeightId),
-    [batchItems, labelMap, threshold, activeWeightId]
+    () => computeMetrics(batchItems, labelMap, threshold),
+    [batchItems, labelMap, threshold]
   );
 
-  const activeWeightName =
-    availableWeights.find((w) => w.id === activeWeightId)?.name ??
-    activeWeightId ??
-    "";
-
-  const activeSingleEntry = activeWeightId
-    ? singleResultsByWeight[activeWeightId]
-    : undefined;
-
   const singleResult =
-    activeSingleEntry && !activeSingleEntry.error
-      ? activeSingleEntry.result
-      : null;
+    singleEntry && !singleEntry.error ? singleEntry.result : null;
 
-  const singleScores = activeSingleEntry?.scores ?? [];
+  const singleScores = singleEntry?.scores ?? [];
 
-  const activeBatchEntry =
-    selectedBatchItem && activeWeightId
-      ? selectedBatchItem.resultsByWeight?.[activeWeightId]
-      : undefined;
+  const activeBatchEntry = selectedBatchItem?.result;
 
   return (
     <div
@@ -2559,11 +2185,7 @@ export default function SyntheticVideoDetector() {
 
                   <div className="flex items-center gap-3">
                     <span className={`text-xs ${theme.textSub}`}>
-                      Weight:{" "}
-                      <span className={`font-bold ${theme.textHeading}`}>
-                        {activeWeightName}
-                      </span>{" "}
-                      · {metrics.n} {t("video có nhãn CSV khớp tên file", "videos with CSV labels matching the file name")} · threshold{" "}
+                      {metrics.n} {t("video có nhãn CSV khớp tên file", "videos with CSV labels matching the file name")} · threshold{" "}
                       {(threshold * 100).toFixed(0)}%
                     </span>
 
@@ -2573,7 +2195,7 @@ export default function SyntheticVideoDetector() {
                       }
                       className={`text-xs px-3 py-1.5 border ${theme.border} ${theme.btnCancel} flex items-center gap-1.5`}
                     >
-                      <Download className="w-3.5 h-3.5" /> {t("Xuất CSV (tất cả weight)", "Export CSV (all weights)")}
+                      <Download className="w-3.5 h-3.5" /> {t("Xuất CSV", "Export CSV")}
                     </button>
                   </div>
                 </div>
@@ -2680,10 +2302,7 @@ export default function SyntheticVideoDetector() {
                 <input
                   type="checkbox"
                   checked={mockMode}
-                  onChange={(e) => {
-                    setMockMode(e.target.checked);
-                    hasAutoSelectedRef.current = false;
-                  }}
+                  onChange={(e) => setMockMode(e.target.checked)}
                   className="accent-[#b58900] mt-0.5"
                 />
 
@@ -2701,87 +2320,6 @@ export default function SyntheticVideoDetector() {
                   </span>
                 </span>
               </label>
-            </div>
-
-            <div
-              className={`${theme.bgCard} border ${theme.border} p-4 mb-6`}
-            >
-              <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-                <h2
-                  className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider flex items-center gap-2`}
-                >
-                  <Database className="w-4 h-4 text-[#6c71c4]" /> Weight
-                  (Google Drive)
-                </h2>
-
-                <div className="flex items-center gap-3">
-                  <span className={`text-[11px] ${theme.textSub}`}>
-                    {t("Đã chọn", "Selected")} {selectedWeightIds.length}/
-                    {availableWeights.length} · {t("tự làm mới mỗi", "auto-refreshes every")}{" "}
-                    {WEIGHTS_POLL_INTERVAL_MS / 1000}s
-                  </span>
-
-                  <button
-                    onClick={loadWeights}
-                    className={`text-xs px-3 py-1.5 border ${theme.border} ${theme.btnCancel} flex items-center gap-1.5`}
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" /> {t("Làm mới", "Refresh")}
-                  </button>
-                </div>
-              </div>
-
-              {weightsError && (
-                <p className="text-[11px] text-[#dc322f] flex items-center gap-1.5 mb-2">
-                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />{" "}
-                  {weightsError}
-                </p>
-              )}
-
-              {availableWeights.length === 0 && !weightsError ? (
-                <p className={`text-xs ${theme.textSub}`}>
-                  {t("Chưa tìm thấy weight nào. Kiểm tra lại thư mục WEIGHTS_ROOT trên Google Drive (mỗi weight là 1 thư mục con chứa best_model.pt + scaler.joblib).", "No weight found. Check the WEIGHTS_ROOT folder on Google Drive (each weight is a subfolder containing best_model.pt + scaler.joblib).")}
-                </p>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                  {availableWeights.map((w) => (
-                    <label
-                      key={w.id}
-                      className={`flex items-start gap-2 px-3 py-2 border ${theme.border} ${theme.inputBg} cursor-pointer transition-colors ${
-                        !w.ready ? "opacity-50" : ""
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedWeightIds.includes(w.id)}
-                        onChange={() => toggleWeightSelected(w.id)}
-                        disabled={!w.ready}
-                        className="accent-[#859900] mt-0.5 shrink-0"
-                      />
-
-                      <span className="min-w-0">
-                        <span
-                          className={`text-xs font-medium block truncate ${theme.textHeading}`}
-                        >
-                          {w.name}
-                        </span>
-
-                        <span
-                          className={`text-[10px] block ${theme.textSub}`}
-                        >
-                          {t("Cập nhật lúc", "Updated at")} {formatWeightTime(w.updated_at)}
-                        </span>
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              )}
-
-              {selectedWeightIds.length === 0 &&
-                availableWeights.length > 0 && (
-                  <p className="text-[11px] text-[#b58900] mt-2">
-                    {t("Chọn ít nhất 1 weight để chạy.", "Select at least one weight to run.")}
-                  </p>
-                )}
             </div>
 
             <div
@@ -2888,9 +2426,7 @@ export default function SyntheticVideoDetector() {
                             <div className="flex gap-3">
                               <button
                                 onClick={handleAnalyze}
-                                disabled={
-                                  isAnalyzing || selectedWeightIds.length === 0
-                                }
+                                disabled={isAnalyzing}
                                 className="flex-1 bg-[#859900] hover:brightness-110 text-[#002b36] font-bold py-3 px-6 border border-[#859900] flex items-center justify-center gap-2 transition-all disabled:opacity-50"
                               >
                                 {isAnalyzing ? (
@@ -2900,7 +2436,7 @@ export default function SyntheticVideoDetector() {
                                   </>
                                 ) : (
                                   <>
-                                    <Cpu className="w-5 h-5" /> {t("Chạy pipeline AI xử lí (", "Run AI pipeline (")}{selectedWeightIds.length} {t("weight)", "weight(s))")}
+                                    <Cpu className="w-5 h-5" /> {t("Chạy pipeline AI", "Run AI pipeline")}
                                   </>
                                 )}
                               </button>
@@ -2908,7 +2444,7 @@ export default function SyntheticVideoDetector() {
                               <button
                                 onClick={() => {
                                   setSelectedFile(null);
-                                  setSingleResultsByWeight({});
+                                  setSingleEntry(null);
                                 }}
                                 className={`px-4 py-3 border ${theme.border} ${theme.btnCancel} text-sm font-medium`}
                               >
@@ -2950,11 +2486,7 @@ export default function SyntheticVideoDetector() {
                           <div className="flex gap-3">
                             <button
                               onClick={handleAnalyze}
-                              disabled={
-                                isAnalyzing ||
-                                selectedWeightIds.length === 0 ||
-                                !singleUrlInput.trim()
-                              }
+                              disabled={isAnalyzing || !singleUrlInput.trim()}
                               className="flex-1 bg-[#859900] hover:brightness-110 text-[#002b36] font-bold py-3 px-6 border border-[#859900] flex items-center justify-center gap-2 transition-all disabled:opacity-50"
                             >
                               {isAnalyzing ? (
@@ -2964,7 +2496,7 @@ export default function SyntheticVideoDetector() {
                                 </>
                               ) : (
                                 <>
-                                  <Cpu className="w-5 h-5" /> {t("Tải & chạy pipeline AI (", "Download & run AI pipeline (")}{selectedWeightIds.length}{" "}{t("weight)", "weight(s))")}
+                                  <Cpu className="w-5 h-5" /> {t("Tải & chạy pipeline AI", "Download & run AI pipeline")}
                                 </>
                               )}
                             </button>
@@ -2972,7 +2504,7 @@ export default function SyntheticVideoDetector() {
                             <button
                               onClick={() => {
                                 setSingleUrlInput("");
-                                setSingleResultsByWeight({});
+                                setSingleEntry(null);
                               }}
                               className={`px-4 py-3 border ${theme.border} ${theme.btnCancel} text-sm font-medium`}
                             >
@@ -2996,17 +2528,7 @@ export default function SyntheticVideoDetector() {
                           {t("Kết quả phân tích", "Analysis Results")}
                         </h2>
 
-                        {Object.keys(singleResultsByWeight).length > 0 && (
-                          <WeightResultTabs
-                            weights={availableWeights}
-                            resultsByWeight={singleResultsByWeight}
-                            activeWeightId={activeWeightId}
-                            onSelect={setActiveWeightId}
-                            theme={theme}
-                          />
-                        )}
-
-                        {Object.keys(singleResultsByWeight).length === 0 &&
+                        {!singleEntry &&
                           !isAnalyzing && (
                             <div
                               className={`text-center py-16 ${theme.textMain}`}
@@ -3035,11 +2557,11 @@ export default function SyntheticVideoDetector() {
                           </div>
                         )}
 
-                        {!isAnalyzing && activeSingleEntry?.error && (
+                        {!isAnalyzing && singleEntry?.error && (
                           <div className="text-center py-16 text-[#dc322f]">
                             <X className="w-12 h-12 mx-auto mb-3 opacity-60" />
                             <p className="text-sm">
-                              {t("Lỗi với weight này:", "Error with this weight:")} {activeSingleEntry.error}
+                              {t("Lỗi:", "Error:")} {singleEntry.error}
                             </p>
                           </div>
                         )}
@@ -3056,7 +2578,7 @@ export default function SyntheticVideoDetector() {
                   </div>
                 </div>
 
-                {singleScores.length > 0 && !activeSingleEntry?.error && (
+                {singleScores.length > 0 && !singleEntry?.error && (
                   <div
                     className={`${theme.bgCard} border ${theme.border} p-6 mt-8`}
                   >
@@ -3141,11 +2663,7 @@ export default function SyntheticVideoDetector() {
 
                       <button
                         onClick={runAllBatch}
-                        disabled={
-                          isBatchRunning ||
-                          pendingCount === 0 ||
-                          selectedWeightIds.length === 0
-                        }
+                        disabled={isBatchRunning || pendingCount === 0}
                         className="text-xs font-bold px-4 py-2 border bg-[#859900] hover:brightness-110 text-[#002b36] flex items-center gap-2 transition-all disabled:opacity-50"
                       >
                         {isBatchRunning ? (
@@ -3156,7 +2674,7 @@ export default function SyntheticVideoDetector() {
                         ) : (
                           <>
                             <Cpu className="w-3.5 h-3.5" /> {t("Chạy tất cả (", "Run all (")}
-                            {pendingCount}) · {selectedWeightIds.length} {t("weight", "weight(s)")}
+                            {pendingCount})
                           </>
                         )}
                       </button>
@@ -3259,7 +2777,7 @@ export default function SyntheticVideoDetector() {
                       </p>
 
                       <p className={`text-xs ${theme.textMain}`}>
-                        {t("Sau khi tải lên, bấm \"Chạy tất cả\" để xử lý lần lượt từng video (mỗi video chạy hết các weight đã chọn cùng lúc)", "After uploading, click \"Run all\" to process videos one by one (each video runs all selected weights at once)")}
+                        {t("Sau khi tải lên, bấm \"Chạy tất cả\" để xử lý lần lượt từng video", "After uploading, click \"Run all\" to process the videos one by one")}
                       </p>
 
                       <input
@@ -3278,7 +2796,6 @@ export default function SyntheticVideoDetector() {
                           item={item}
                           groundTruth={labelMap.get(item.name)}
                           threshold={threshold}
-                          activeWeightId={activeWeightId}
                           isSelected={selectedBatchId === item.id}
                           onSelect={() => setSelectedBatchId(item.id)}
                           onRemove={() => removeBatchItem(item.id)}
@@ -3365,19 +2882,6 @@ export default function SyntheticVideoDetector() {
                           {t("Kết quả phân tích", "Analysis Results")}
                         </h2>
 
-                        {selectedBatchItem.status === "done" &&
-                          selectedBatchItem.resultsByWeight && (
-                            <WeightResultTabs
-                              weights={availableWeights}
-                              resultsByWeight={
-                                selectedBatchItem.resultsByWeight
-                              }
-                              activeWeightId={activeWeightId}
-                              onSelect={setActiveWeightId}
-                              theme={theme}
-                            />
-                          )}
-
                         {selectedBatchItem.status === "queued" && (
                           <div
                             className={`text-center py-16 ${theme.textMain}`}
@@ -3415,34 +2919,11 @@ export default function SyntheticVideoDetector() {
                         )}
 
                         {selectedBatchItem.status === "done" &&
-                          !activeWeightId && (
-                            <div
-                              className={`text-center py-16 ${theme.textMain}`}
-                            >
-                              <p className="text-sm">
-                                {t("Chọn 1 tab weight ở trên để xem kết quả.", "Select a weight tab above to see results.")}
-                              </p>
-                            </div>
-                          )}
-
-                        {selectedBatchItem.status === "done" &&
-                          activeWeightId &&
-                          !activeBatchEntry && (
-                            <div
-                              className={`text-center py-16 ${theme.textMain}`}
-                            >
-                              <p className="text-sm">
-                                {t("Video này chưa được chạy với weight đang xem.", "This video has not been run with the weight being viewed.")}
-                              </p>
-                            </div>
-                          )}
-
-                        {selectedBatchItem.status === "done" &&
                           activeBatchEntry?.error && (
                             <div className="text-center py-16 text-[#dc322f]">
                               <X className="w-12 h-12 mx-auto mb-3 opacity-60" />
                               <p className="text-sm">
-                                {t("Lỗi với weight này:", "Error with this weight:")} {activeBatchEntry.error}
+                                {t("Lỗi:", "Error:")} {activeBatchEntry.error}
                               </p>
                             </div>
                           )}
@@ -3508,19 +2989,9 @@ export default function SyntheticVideoDetector() {
             theme={theme}
             isDarkMode={isDarkMode}
             mockMode={mockMode}
-            setMockMode={(v: boolean) => {
-              setMockMode(v);
-              hasAutoSelectedRef.current = false;
-            }}
+            setMockMode={setMockMode}
             threshold={threshold}
             setThreshold={setThreshold}
-            availableWeights={availableWeights}
-            selectedWeightIds={selectedWeightIds}
-            toggleWeightSelected={toggleWeightSelected}
-            activeWeightId={activeWeightId}
-            setActiveWeightId={setActiveWeightId}
-            weightsError={weightsError}
-            loadWeights={loadWeights}
             batchItems={batchItems}
             labelMap={labelMap}
             metrics={metrics}

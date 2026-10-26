@@ -200,6 +200,7 @@ type AnalysisResult = {
 type BatchStatus = "queued" | "processing" | "done" | "error";
 
 type TimingRow = {
+  run: number | null;
   scope: string; // "single_shot" | "window"
   windowIdx: number | null;
   timeSec: number | null; // tâm cửa sổ (giây trong video)
@@ -210,6 +211,9 @@ type TimingInfo = {
   videoDurationSec: number | null;
   videoInfo: Record<string, number | string | null>;
   nWindows: number;
+  repeats: number;
+  runTimes: number[];
+  runSummaries: Record<string, number>[];
   totalSec: number | null;
   summary: Record<string, number>;
   rows: TimingRow[];
@@ -284,10 +288,14 @@ function parseTiming(raw: any): TimingInfo | undefined {
     videoInfo:
       raw.video_info && typeof raw.video_info === "object" ? raw.video_info : {},
     nWindows: Number(raw.n_windows) || 0,
+    repeats: Number(raw.repeats) || 1,
+    runTimes: Array.isArray(raw.run_times_sec) ? raw.run_times_sec.map(Number) : [],
+    runSummaries: Array.isArray(raw.run_summaries) ? raw.run_summaries : [],
     totalSec: num(raw.total_sec),
     summary: raw.summary && typeof raw.summary === "object" ? raw.summary : {},
     rows: Array.isArray(raw.rows)
       ? raw.rows.map((row: any) => ({
+          run: num(row.run),
           scope: String(row.scope ?? ""),
           windowIdx: num(row.window_idx),
           timeSec: num(row.time),
@@ -327,7 +335,12 @@ function parseBackendResult(r: any): VideoResult {
   };
 }
 
-async function postToBackend(path: string, formData: FormData): Promise<VideoResult> {
+async function postToBackend(
+  path: string,
+  formData: FormData,
+  repeats: number
+): Promise<VideoResult> {
+  formData.append("repeats", String(repeats));
   const response = await fetch(`${NGROK_BASE}${path}`, {
     method: "POST",
     body: formData,
@@ -350,16 +363,16 @@ async function postToBackend(path: string, formData: FormData): Promise<VideoRes
   return parseBackendResult(await response.json());
 }
 
-async function analyzeVideoFile(file: File): Promise<VideoResult> {
+async function analyzeVideoFile(file: File, repeats = 1): Promise<VideoResult> {
   const formData = new FormData();
   formData.append("file", file);
-  return postToBackend("/upload/", formData);
+  return postToBackend("/upload/", formData, repeats);
 }
 
-async function analyzeVideoUrl(url: string): Promise<VideoResult> {
+async function analyzeVideoUrl(url: string, repeats = 1): Promise<VideoResult> {
   const formData = new FormData();
   formData.append("url", url);
-  return postToBackend("/upload_url/", formData);
+  return postToBackend("/upload_url/", formData, repeats);
 }
 
 function stringSeed(str: string): number {
@@ -725,6 +738,7 @@ function buildTimingCsv(entries: { name: string; result?: VideoResult }[]): stri
   const header = [
     "video",
     "scope",
+    "run",
     "window_idx",
     "window_center_sec",
     ...TIMING_STEP_COLUMNS.map((s) => `${s}_sec`),
@@ -738,6 +752,8 @@ function buildTimingCsv(entries: { name: string; result?: VideoResult }[]): stri
     "bitrate_kbps",
     "codec",
     "n_windows",
+    "repeats",
+    "run_times_sec",
     "processing_time_sec",
   ];
 
@@ -767,7 +783,9 @@ function buildTimingCsv(entries: { name: string; result?: VideoResult }[]): stri
       viStr("bitrate_kbps"),
       escapeCsvField(viStr("codec")),
       String(tm.nWindows),
-      f(result.processingTime),
+      String(tm.repeats),
+      tm.runTimes.map((x) => x.toFixed(2)).join(";"),
+      f(result.processingTime), // = trung vị các lần chạy nếu repeats > 1
     ];
 
     tm.rows.forEach((row) => {
@@ -775,6 +793,7 @@ function buildTimingCsv(entries: { name: string; result?: VideoResult }[]): stri
         [
           escapeCsvField(name),
           row.scope,
+          row.run === null ? "" : String(row.run),
           row.windowIdx === null ? "" : String(row.windowIdx),
           f(row.timeSec),
           ...TIMING_STEP_COLUMNS.map((s) => f(row.steps[s])),
@@ -783,11 +802,29 @@ function buildTimingCsv(entries: { name: string; result?: VideoResult }[]): stri
       );
     });
 
-    // Dòng tổng hợp: cộng dồn từng bước trên toàn bộ video (single_shot + mọi cửa sổ)
+    // Tổng từng lần chạy (chỉ khi chạy lặp > 1 lần)
+    if (tm.repeats > 1) {
+      tm.runSummaries.forEach((sum, i) => {
+        lines.push(
+          [
+            escapeCsvField(name),
+            "run_total",
+            String(i + 1),
+            "",
+            "",
+            ...TIMING_STEP_COLUMNS.map((s) => f(sum[s])),
+            ...tail,
+          ].join(",")
+        );
+      });
+    }
+
+    // Dòng tổng hợp toàn video: cộng dồn mọi cửa sổ; nếu chạy lặp thì là TRUNG VỊ qua các lần
     lines.push(
       [
         escapeCsvField(name),
-        "video_total",
+        tm.repeats > 1 ? "video_median" : "video_total",
+        "",
         "",
         "",
         ...TIMING_STEP_COLUMNS.map((s) => f(tm.summary[s])),
@@ -1270,6 +1307,8 @@ function DashboardView({
   setMockMode,
   threshold,
   setThreshold,
+  repeats,
+  setRepeats,
   batchItems,
   labelMap,
   metrics,
@@ -1306,6 +1345,8 @@ function DashboardView({
   setMockMode: (v: boolean) => void;
   threshold: number;
   setThreshold: (v: number) => void;
+  repeats: number;
+  setRepeats: (v: number) => void;
   batchItems: BatchItem[];
   labelMap: Map<string, number>;
   metrics: ReturnType<typeof computeMetrics>;
@@ -1442,6 +1483,22 @@ function DashboardView({
             />
           </div>
         </div>
+
+        <label className="flex items-center gap-2 shrink-0 text-xs">
+          <span className={`font-bold ${theme.textHeading}`}>
+            {t("Số lần chạy / video (lấy trung vị thời gian)", "Runs per video (median time)")}
+          </span>
+          <input
+            type="number"
+            min={1}
+            max={10}
+            value={repeats}
+            onChange={(e) =>
+              setRepeats(Math.max(1, Math.min(10, Math.floor(Number(e.target.value)) || 1)))
+            }
+            className={`w-14 px-2 py-1 border ${theme.border} ${theme.inputBg} ${theme.textMain}`}
+          />
+        </label>
 
         <label className="flex items-center gap-2 cursor-pointer shrink-0 text-xs">
           <input
@@ -1959,6 +2016,7 @@ export default function SyntheticVideoDetector() {
   }, [lang]);
   const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD);
   const [mockMode, setMockMode] = useState(false);
+  const [repeats, setRepeats] = useState(1);
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [singleSourceMode, setSingleSourceMode] = useState<"file" | "url">(
@@ -2050,8 +2108,8 @@ export default function SyntheticVideoDetector() {
       const entry = mockMode
         ? await generateMockResult(isUrlMode ? trimmedUrl : selectedFile!.name)
         : isUrlMode
-        ? await analyzeVideoUrl(trimmedUrl)
-        : await analyzeVideoFile(selectedFile!);
+        ? await analyzeVideoUrl(trimmedUrl, repeats)
+        : await analyzeVideoFile(selectedFile!, repeats);
 
       setSingleEntry(entry);
     } catch (error) {
@@ -2188,8 +2246,8 @@ export default function SyntheticVideoDetector() {
       const entry = mockMode
         ? await generateMockResult(item.name, labelMap.get(item.name))
         : item.file
-        ? await analyzeVideoFile(item.file)
-        : await analyzeVideoUrl(item.sourceUrl as string);
+        ? await analyzeVideoFile(item.file, repeats)
+        : await analyzeVideoUrl(item.sourceUrl as string, repeats);
 
       setBatchItems((prev) =>
         prev.map((it) =>
@@ -2518,6 +2576,27 @@ export default function SyntheticVideoDetector() {
                   </p>
                 </div>
               </div>
+
+              <label className="flex items-start gap-2 shrink-0 max-w-xs">
+                <span>
+                  <span className={`text-xs font-bold ${theme.textHeading} block`}>
+                    {t("Số lần chạy / video", "Runs per video")}
+                  </span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={repeats}
+                    onChange={(e) =>
+                      setRepeats(Math.max(1, Math.min(10, Math.floor(Number(e.target.value)) || 1)))
+                    }
+                    className={`w-16 mt-1 px-2 py-1 text-xs border ${theme.border} ${theme.inputBg} ${theme.textMain}`}
+                  />
+                  <span className={`text-[11px] ${theme.textSub} block mt-0.5`}>
+                    {t("Chạy lặp, thời gian hiển thị và trong CSV là trung vị (GPU Colab dao động).", "Repeat each video; shown and exported time is the median (Colab GPU fluctuates).")}
+                  </span>
+                </span>
+              </label>
 
               <label className="flex items-start gap-2 cursor-pointer shrink-0 max-w-xs">
                 <input
@@ -3251,6 +3330,8 @@ export default function SyntheticVideoDetector() {
             setMockMode={setMockMode}
             threshold={threshold}
             setThreshold={setThreshold}
+            repeats={repeats}
+            setRepeats={setRepeats}
             batchItems={batchItems}
             labelMap={labelMap}
             metrics={metrics}

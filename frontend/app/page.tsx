@@ -199,11 +199,28 @@ type AnalysisResult = {
 
 type BatchStatus = "queued" | "processing" | "done" | "error";
 
+type TimingRow = {
+  scope: string; // "single_shot" | "window"
+  windowIdx: number | null;
+  timeSec: number | null; // tâm cửa sổ (giây trong video)
+  steps: Record<string, number>; // giây
+};
+
+type TimingInfo = {
+  videoDurationSec: number | null;
+  videoInfo: Record<string, number | string | null>;
+  nWindows: number;
+  totalSec: number | null;
+  summary: Record<string, number>;
+  rows: TimingRow[];
+};
+
 type VideoResult = {
   result: AnalysisResult;
   scores: ScorePoint[];
   error?: string;
   processingTime?: number; // giây: thời gian model xử lý xong video này
+  timing?: TimingInfo; // thời gian chi tiết từng bước do backend đo
 };
 
 type BatchItem = {
@@ -258,6 +275,28 @@ function LiveTimer({ className = "" }: { className?: string }) {
   return <span className={`tabular-nums ${className}`}>{formatDuration(elapsed)}</span>;
 }
 
+function parseTiming(raw: any): TimingInfo | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const num = (v: any) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+
+  return {
+    videoDurationSec: num(raw.video_duration_sec),
+    videoInfo:
+      raw.video_info && typeof raw.video_info === "object" ? raw.video_info : {},
+    nWindows: Number(raw.n_windows) || 0,
+    totalSec: num(raw.total_sec),
+    summary: raw.summary && typeof raw.summary === "object" ? raw.summary : {},
+    rows: Array.isArray(raw.rows)
+      ? raw.rows.map((row: any) => ({
+          scope: String(row.scope ?? ""),
+          windowIdx: num(row.window_idx),
+          timeSec: num(row.time),
+          steps: row.steps && typeof row.steps === "object" ? row.steps : {},
+        }))
+      : [],
+  };
+}
+
 // Backend trả về 1 object phẳng: {label, probability_ai, confidence, scores}.
 function parseBackendResult(r: any): VideoResult {
   if (!r || r.error) {
@@ -278,6 +317,7 @@ function parseBackendResult(r: any): VideoResult {
       typeof r.processing_time_sec === "number"
         ? r.processing_time_sec
         : undefined,
+    timing: parseTiming(r.timing),
     scores: Array.isArray(r.scores)
       ? r.scores.map((p: any) => ({
           time: Number(p.time),
@@ -288,7 +328,6 @@ function parseBackendResult(r: any): VideoResult {
 }
 
 async function postToBackend(path: string, formData: FormData): Promise<VideoResult> {
-  const startedAt = performance.now();
   const response = await fetch(`${NGROK_BASE}${path}`, {
     method: "POST",
     body: formData,
@@ -306,13 +345,9 @@ async function postToBackend(path: string, formData: FormData): Promise<VideoRes
     throw new Error(message);
   }
 
-  const parsed = parseBackendResult(await response.json());
-  // Ưu tiên thời gian model do backend đo; nếu backend cũ chưa trả về thì dùng
-  // tổng thời gian chờ phía trình duyệt (gồm cả upload).
-  if (parsed.processingTime === undefined && !parsed.error) {
-    parsed.processingTime = (performance.now() - startedAt) / 1000;
-  }
-  return parsed;
+  // Chỉ dùng thời gian do backend đo; không tự tính phía trình duyệt
+  // (sẽ lẫn thời gian upload/mạng). Thiếu -> hiển thị "Backend không phản hồi".
+  return parseBackendResult(await response.json());
 }
 
 async function analyzeVideoFile(file: File): Promise<VideoResult> {
@@ -673,6 +708,114 @@ function downloadResultsCsv(
   URL.revokeObjectURL(url);
 }
 
+// Thứ tự cột các bước đo thời gian (khớp với tên bước backend ghi vào "timing").
+const TIMING_STEP_COLUMNS = [
+  "open_video",
+  "read_frames",
+  "clip_embed",
+  "fft_residual",
+  "dinov2_forward",
+  "concat_features",
+  "scale",
+  "bilstm",
+  "step_total",
+];
+
+function buildTimingCsv(entries: { name: string; result?: VideoResult }[]): string {
+  const header = [
+    "video",
+    "scope",
+    "window_idx",
+    "window_center_sec",
+    ...TIMING_STEP_COLUMNS.map((s) => `${s}_sec`),
+    "video_duration_sec",
+    "width",
+    "height",
+    "resolution",
+    "fps",
+    "total_frames",
+    "file_size_mb",
+    "bitrate_kbps",
+    "codec",
+    "n_windows",
+    "processing_time_sec",
+  ];
+
+  const f = (v: number | null | undefined) =>
+    v === null || v === undefined ? "" : v.toFixed(4);
+
+  const lines: string[] = [];
+
+  entries.forEach(({ name, result }) => {
+    const tm = result?.timing;
+    if (!result || result.error || !tm) return;
+
+    const vi = tm.videoInfo;
+    const viStr = (k: string) =>
+      vi[k] === null || vi[k] === undefined ? "" : String(vi[k]);
+    const resolution =
+      vi.width && vi.height ? `${vi.width}x${vi.height}` : "";
+
+    const tail = [
+      f(tm.videoDurationSec),
+      viStr("width"),
+      viStr("height"),
+      resolution,
+      viStr("fps"),
+      viStr("total_frames"),
+      viStr("file_size_mb"),
+      viStr("bitrate_kbps"),
+      escapeCsvField(viStr("codec")),
+      String(tm.nWindows),
+      f(result.processingTime),
+    ];
+
+    tm.rows.forEach((row) => {
+      lines.push(
+        [
+          escapeCsvField(name),
+          row.scope,
+          row.windowIdx === null ? "" : String(row.windowIdx),
+          f(row.timeSec),
+          ...TIMING_STEP_COLUMNS.map((s) => f(row.steps[s])),
+          ...tail,
+        ].join(",")
+      );
+    });
+
+    // Dòng tổng hợp: cộng dồn từng bước trên toàn bộ video (single_shot + mọi cửa sổ)
+    lines.push(
+      [
+        escapeCsvField(name),
+        "video_total",
+        "",
+        "",
+        ...TIMING_STEP_COLUMNS.map((s) => f(tm.summary[s])),
+        ...tail,
+      ].join(",")
+    );
+  });
+
+  return [header.join(","), ...lines].join("\r\n");
+}
+
+function downloadTimingCsv(entries: { name: string; result?: VideoResult }[]) {
+  const csvContent = buildTimingCsv(entries);
+  const blob = new Blob(["﻿" + csvContent], {
+    type: "text/csv;charset=utf-8;",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+
+  a.href = url;
+  a.download = "thoi_gian_xu_ly_chi_tiet.csv";
+
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 type Theme = {
   bgMain: string;
   bgCard: string;
@@ -826,17 +969,17 @@ function ResultSummary({
           </span>
         </div>
 
-        {processingTime !== undefined && (
-          <div className={`flex justify-between py-2 border-b ${theme.border}`}>
-            <span className={`${theme.textMain} flex items-center gap-1.5`}>
-              <Clock className="w-3.5 h-3.5 text-[#268bd2]" />
-              {t("Thời gian xử lý:", "Processing time:")}
-            </span>
-            <span className={`${theme.textHeading} tabular-nums font-semibold`}>
-              {formatDuration(processingTime)}
-            </span>
-          </div>
-        )}
+        <div className={`flex justify-between py-2 border-b ${theme.border}`}>
+          <span className={`${theme.textMain} flex items-center gap-1.5`}>
+            <Clock className="w-3.5 h-3.5 text-[#268bd2]" />
+            {t("Thời gian xử lý:", "Processing time:")}
+          </span>
+          <span className={`${theme.textHeading} tabular-nums font-semibold`}>
+            {processingTime !== undefined
+              ? formatDuration(processingTime)
+              : t("Backend không phản hồi", "Backend did not respond")}
+          </span>
+        </div>
 
         <div className={`flex justify-between py-2 border-b ${theme.border}`}>
           <span className={theme.textMain}>{t("Threshold đang dùng:", "Active threshold:")}</span>
@@ -1092,9 +1235,11 @@ function BatchGridCard({
             {(classified.probability_ai * 100).toFixed(0)}%
           </span>
 
-          {activeEntry?.processingTime !== undefined && (
+          {activeEntry && !activeEntry.error && (
             <span className="text-[10px] text-white/70 tabular-nums">
-              {activeEntry.processingTime.toFixed(1)}s
+              {activeEntry.processingTime !== undefined
+                ? `${activeEntry.processingTime.toFixed(1)}s`
+                : t("Backend không phản hồi", "Backend did not respond")}
             </span>
           )}
 
@@ -1413,6 +1558,13 @@ function DashboardView({
           className={`text-xs px-3 py-2 border ${theme.border} ${theme.btnCancel} flex items-center gap-1.5`}
         >
           <Download className="w-3.5 h-3.5" /> {t("Xuất CSV", "Export CSV")}
+        </button>
+
+        <button
+          onClick={() => downloadTimingCsv(batchItems)}
+          className={`text-xs px-3 py-2 border ${theme.border} ${theme.btnCancel} flex items-center gap-1.5`}
+        >
+          <Download className="w-3.5 h-3.5" /> {t("CSV thời gian", "Timing CSV")}
         </button>
 
         <button
@@ -2259,6 +2411,13 @@ export default function SyntheticVideoDetector() {
                     >
                       <Download className="w-3.5 h-3.5" /> {t("Xuất CSV", "Export CSV")}
                     </button>
+
+                    <button
+                      onClick={() => downloadTimingCsv(batchItems)}
+                      className={`text-xs px-3 py-1.5 border ${theme.border} ${theme.btnCancel} flex items-center gap-1.5`}
+                    >
+                      <Download className="w-3.5 h-3.5" /> {t("CSV thời gian", "Timing CSV")}
+                    </button>
                   </div>
                 </div>
 
@@ -2640,6 +2799,26 @@ export default function SyntheticVideoDetector() {
                             processingTime={singleEntry?.processingTime}
                           />
                         )}
+
+                        {!isAnalyzing && singleEntry?.timing && (
+                          <button
+                            onClick={() =>
+                              downloadTimingCsv([
+                                {
+                                  name:
+                                    singleSourceMode === "url"
+                                      ? singleUrlInput.trim()
+                                      : selectedFile?.name ?? "video",
+                                  result: singleEntry,
+                                },
+                              ])
+                            }
+                            className={`mt-3 text-xs px-3 py-2 border ${theme.border} ${theme.btnCancel} flex items-center gap-1.5`}
+                          >
+                            <Download className="w-3.5 h-3.5" />{" "}
+                            {t("Xuất CSV thời gian chi tiết", "Export detailed timing CSV")}
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -2754,6 +2933,14 @@ export default function SyntheticVideoDetector() {
                         className={`text-xs px-3 py-2 border ${theme.border} ${theme.btnCancel} flex items-center gap-2 transition-colors disabled:opacity-40`}
                       >
                         <Download className="w-3.5 h-3.5" /> {t("Xuất CSV", "Export CSV")}
+                      </button>
+
+                      <button
+                        onClick={() => downloadTimingCsv(batchItems)}
+                        disabled={doneCount === 0}
+                        className={`text-xs px-3 py-2 border ${theme.border} ${theme.btnCancel} flex items-center gap-2 transition-colors disabled:opacity-40`}
+                      >
+                        <Download className="w-3.5 h-3.5" /> {t("CSV thời gian", "Timing CSV")}
                       </button>
 
                       <button

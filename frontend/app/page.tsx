@@ -1635,7 +1635,8 @@ function DashboardView({
             onChange={(e) =>
               setRepeats(Math.max(1, Math.min(10, Math.floor(Number(e.target.value)) || 1)))
             }
-            className={`w-14 px-2 py-1 border ${theme.border} ${theme.inputBg} ${theme.textMain}`}
+            style={{ colorScheme: isDarkMode ? "dark" : "light" }}
+            className={`w-14 px-2 py-1 border ${theme.border} bg-transparent ${theme.textHeading} outline-none`}
           />
         </label>
 
@@ -2729,7 +2730,8 @@ export default function SyntheticVideoDetector() {
                     onChange={(e) =>
                       setRepeats(Math.max(1, Math.min(10, Math.floor(Number(e.target.value)) || 1)))
                     }
-                    className={`w-16 mt-1 px-2 py-1 text-xs border ${theme.border} ${theme.inputBg} ${theme.textMain}`}
+                    style={{ colorScheme: isDarkMode ? "dark" : "light" }}
+                    className={`w-16 mt-1 px-2 py-1 text-xs border ${theme.border} bg-transparent ${theme.textHeading} outline-none`}
                   />
                   <span className={`text-[11px] ${theme.textSub} block mt-0.5`}>
                     {t("Chạy lặp, thời gian hiển thị và trong CSV là trung vị (GPU Colab dao động).", "Repeat each video; shown and exported time is the median (Colab GPU fluctuates).")}

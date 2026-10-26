@@ -205,6 +205,8 @@ type TimingRow = {
   windowIdx: number | null;
   timeSec: number | null; // tâm cửa sổ (giây trong video)
   steps: Record<string, number>; // giây
+  gpuMemPeakMb: number | null; // GPU peak (đến cửa sổ này)
+  cpuRssMb: number | null; // RAM tiến trình sau cửa sổ
 };
 
 type TimingInfo = {
@@ -214,6 +216,8 @@ type TimingInfo = {
   repeats: number;
   runTimes: number[];
   runSummaries: Record<string, number>[];
+  resources: Record<string, number | null>; // trung vị qua các lần chạy
+  runResources: Record<string, number | null>[];
   totalSec: number | null;
   summary: Record<string, number>;
   rows: TimingRow[];
@@ -291,6 +295,8 @@ function parseTiming(raw: any): TimingInfo | undefined {
     repeats: Number(raw.repeats) || 1,
     runTimes: Array.isArray(raw.run_times_sec) ? raw.run_times_sec.map(Number) : [],
     runSummaries: Array.isArray(raw.run_summaries) ? raw.run_summaries : [],
+    resources: raw.resources && typeof raw.resources === "object" ? raw.resources : {},
+    runResources: Array.isArray(raw.run_resources) ? raw.run_resources : [],
     totalSec: num(raw.total_sec),
     summary: raw.summary && typeof raw.summary === "object" ? raw.summary : {},
     rows: Array.isArray(raw.rows)
@@ -300,6 +306,8 @@ function parseTiming(raw: any): TimingInfo | undefined {
           windowIdx: num(row.window_idx),
           timeSec: num(row.time),
           steps: row.steps && typeof row.steps === "object" ? row.steps : {},
+          gpuMemPeakMb: num(row.gpu_mem_peak_mb),
+          cpuRssMb: num(row.cpu_rss_mb),
         }))
       : [],
   };
@@ -734,31 +742,78 @@ const TIMING_STEP_COLUMNS = [
   "step_total",
 ];
 
-function buildTimingCsv(entries: { name: string; result?: VideoResult }[]): string {
+const RESOURCE_COLUMNS = [
+  "gpu_mem_baseline_mb",
+  "gpu_mem_peak_mb",
+  "gpu_mem_reserved_peak_mb",
+  "cpu_rss_baseline_mb",
+  "cpu_rss_peak_mb",
+  "cpu_percent_avg",
+  "cpu_percent_peak",
+  "gpu_util_avg_pct",
+  "gpu_util_peak_pct",
+];
+
+type TimingEntry = { name: string; result?: VideoResult };
+
+const fmtNum = (v: number | null | undefined, digits = 4) =>
+  v === null || v === undefined || !Number.isFinite(v) ? "" : v.toFixed(digits);
+
+const median = (xs: number[]) => {
+  if (xs.length === 0) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+
+function videoInfoCells(tm: TimingInfo): string[] {
+  const vi = tm.videoInfo;
+  const g = (k: string) =>
+    vi[k] === null || vi[k] === undefined ? "" : String(vi[k]);
+  const resolution = vi.width && vi.height ? `${vi.width}x${vi.height}` : "";
+
+  return [
+    fmtNum(tm.videoDurationSec),
+    g("width"),
+    g("height"),
+    resolution,
+    g("fps"),
+    g("total_frames"),
+    g("file_size_mb"),
+    g("bitrate_kbps"),
+    escapeCsvField(g("codec")),
+  ];
+}
+
+const VIDEO_INFO_HEADER = [
+  "video_duration_sec",
+  "width",
+  "height",
+  "resolution",
+  "fps",
+  "total_frames",
+  "file_size_mb",
+  "bitrate_kbps",
+  "codec",
+];
+
+// File 1: tổng hợp, mỗi video 1 dòng (trung vị, min, max, tài nguyên...)
+function buildTimingSummaryCsv(entries: TimingEntry[]): string {
   const header = [
     "video",
-    "scope",
-    "run",
-    "window_idx",
-    "window_center_sec",
-    ...TIMING_STEP_COLUMNS.map((s) => `${s}_sec`),
-    "video_duration_sec",
-    "width",
-    "height",
-    "resolution",
-    "fps",
-    "total_frames",
-    "file_size_mb",
-    "bitrate_kbps",
-    "codec",
+    ...VIDEO_INFO_HEADER,
     "n_windows",
     "repeats",
+    "processing_time_median_sec",
+    "processing_time_min_sec",
+    "processing_time_max_sec",
+    "processing_time_mean_sec",
     "run_times_sec",
-    "processing_time_sec",
+    "realtime_factor",
+    "ms_per_window_median",
+    ...TIMING_STEP_COLUMNS.map((s) => `${s}_median_sec`),
+    ...RESOURCE_COLUMNS,
   ];
-
-  const f = (v: number | null | undefined) =>
-    v === null || v === undefined ? "" : v.toFixed(4);
 
   const lines: string[] = [];
 
@@ -766,69 +821,33 @@ function buildTimingCsv(entries: { name: string; result?: VideoResult }[]): stri
     const tm = result?.timing;
     if (!result || result.error || !tm) return;
 
-    const vi = tm.videoInfo;
-    const viStr = (k: string) =>
-      vi[k] === null || vi[k] === undefined ? "" : String(vi[k]);
-    const resolution =
-      vi.width && vi.height ? `${vi.width}x${vi.height}` : "";
+    const runs = tm.runTimes.length > 0 ? tm.runTimes : [];
+    const med = result.processingTime ?? median(runs);
+    const mean = runs.length ? runs.reduce((a, b) => a + b, 0) / runs.length : null;
+    const rtf =
+      med !== null && med !== undefined && tm.videoDurationSec
+        ? med / tm.videoDurationSec
+        : null;
+    const msPerWindow =
+      med !== null && med !== undefined && tm.nWindows > 0
+        ? (med / tm.nWindows) * 1000
+        : null;
 
-    const tail = [
-      f(tm.videoDurationSec),
-      viStr("width"),
-      viStr("height"),
-      resolution,
-      viStr("fps"),
-      viStr("total_frames"),
-      viStr("file_size_mb"),
-      viStr("bitrate_kbps"),
-      escapeCsvField(viStr("codec")),
-      String(tm.nWindows),
-      String(tm.repeats),
-      tm.runTimes.map((x) => x.toFixed(2)).join(";"),
-      f(result.processingTime), // = trung vị các lần chạy nếu repeats > 1
-    ];
-
-    tm.rows.forEach((row) => {
-      lines.push(
-        [
-          escapeCsvField(name),
-          row.scope,
-          row.run === null ? "" : String(row.run),
-          row.windowIdx === null ? "" : String(row.windowIdx),
-          f(row.timeSec),
-          ...TIMING_STEP_COLUMNS.map((s) => f(row.steps[s])),
-          ...tail,
-        ].join(",")
-      );
-    });
-
-    // Tổng từng lần chạy (chỉ khi chạy lặp > 1 lần)
-    if (tm.repeats > 1) {
-      tm.runSummaries.forEach((sum, i) => {
-        lines.push(
-          [
-            escapeCsvField(name),
-            "run_total",
-            String(i + 1),
-            "",
-            "",
-            ...TIMING_STEP_COLUMNS.map((s) => f(sum[s])),
-            ...tail,
-          ].join(",")
-        );
-      });
-    }
-
-    // Dòng tổng hợp toàn video: cộng dồn mọi cửa sổ; nếu chạy lặp thì là TRUNG VỊ qua các lần
     lines.push(
       [
         escapeCsvField(name),
-        tm.repeats > 1 ? "video_median" : "video_total",
-        "",
-        "",
-        "",
-        ...TIMING_STEP_COLUMNS.map((s) => f(tm.summary[s])),
-        ...tail,
+        ...videoInfoCells(tm),
+        String(tm.nWindows),
+        String(tm.repeats),
+        fmtNum(med, 2),
+        fmtNum(runs.length ? Math.min(...runs) : null, 2),
+        fmtNum(runs.length ? Math.max(...runs) : null, 2),
+        fmtNum(mean, 2),
+        runs.map((x) => x.toFixed(2)).join(";"),
+        fmtNum(rtf, 3),
+        fmtNum(msPerWindow, 1),
+        ...TIMING_STEP_COLUMNS.map((s) => fmtNum(tm.summary[s])),
+        ...RESOURCE_COLUMNS.map((k) => fmtNum(tm.resources[k], 2)),
       ].join(",")
     );
   });
@@ -836,21 +855,105 @@ function buildTimingCsv(entries: { name: string; result?: VideoResult }[]): stri
   return [header.join(","), ...lines].join("\r\n");
 }
 
-function downloadTimingCsv(entries: { name: string; result?: VideoResult }[]) {
-  const csvContent = buildTimingCsv(entries);
-  const blob = new Blob(["﻿" + csvContent], {
+// File 2: chi tiết từng run x từng window (+ dòng run_total cho mỗi lần chạy)
+function buildTimingDetailCsv(entries: TimingEntry[]): string {
+  const header = [
+    "video",
+    "run",
+    "scope",
+    "window_idx",
+    "window_center_sec",
+    ...TIMING_STEP_COLUMNS.map((s) => `${s}_sec`),
+    "gpu_mem_peak_mb",
+    "cpu_rss_mb",
+    "gpu_mem_reserved_peak_mb",
+    "cpu_rss_peak_mb",
+    "cpu_percent_avg",
+    "cpu_percent_peak",
+    "gpu_util_avg_pct",
+    "gpu_util_peak_pct",
+    "resolution",
+    "video_duration_sec",
+  ];
+
+  const lines: string[] = [];
+
+  entries.forEach(({ name, result }) => {
+    const tm = result?.timing;
+    if (!result || result.error || !tm) return;
+
+    const info = videoInfoCells(tm);
+    const tail = [info[3], info[0]]; // resolution, video_duration_sec
+    const blank5 = ["", "", "", "", ""];
+
+    tm.rows.forEach((row) => {
+      lines.push(
+        [
+          escapeCsvField(name),
+          row.run === null ? "" : String(row.run),
+          row.scope,
+          row.windowIdx === null ? "" : String(row.windowIdx),
+          fmtNum(row.timeSec),
+          ...TIMING_STEP_COLUMNS.map((s) => fmtNum(row.steps[s])),
+          fmtNum(row.gpuMemPeakMb, 2), // peak tích lũy đến hết cửa sổ này
+          fmtNum(row.cpuRssMb, 2),
+          ...blank5,
+          "",
+          ...tail,
+        ].join(",")
+      );
+    });
+
+    tm.runSummaries.forEach((sum, i) => {
+      const rs = tm.runResources[i] ?? {};
+      lines.push(
+        [
+          escapeCsvField(name),
+          String(i + 1),
+          "run_total",
+          "",
+          "",
+          ...TIMING_STEP_COLUMNS.map((s) => fmtNum(sum[s])),
+          fmtNum(rs.gpu_mem_peak_mb, 2),
+          fmtNum(rs.cpu_rss_peak_mb, 2),
+          fmtNum(rs.gpu_mem_reserved_peak_mb, 2),
+          fmtNum(rs.cpu_rss_peak_mb, 2),
+          fmtNum(rs.cpu_percent_avg, 2),
+          fmtNum(rs.cpu_percent_peak, 2),
+          fmtNum(rs.gpu_util_avg_pct, 2),
+          fmtNum(rs.gpu_util_peak_pct, 2),
+          ...tail,
+        ].join(",")
+      );
+    });
+  });
+
+  return [header.join(","), ...lines].join("\r\n");
+}
+
+function saveCsv(content: string, filename: string) {
+  const blob = new Blob(["\uFEFF" + content], {
     type: "text/csv;charset=utf-8;",
   });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
 
   a.href = url;
-  a.download = "thoi_gian_xu_ly_chi_tiet.csv";
+  a.download = filename;
 
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+// Một lần bấm -> tải 2 file: tổng hợp + chi tiết.
+function downloadTimingCsv(entries: TimingEntry[]) {
+  saveCsv(buildTimingSummaryCsv(entries), "thoi_gian_tong_hop.csv");
+  setTimeout(
+    () => saveCsv(buildTimingDetailCsv(entries), "thoi_gian_chi_tiet.csv"),
+    400
+  );
 }
 
 type Theme = {
@@ -1621,7 +1724,7 @@ function DashboardView({
           onClick={() => downloadTimingCsv(batchItems)}
           className={`text-xs px-3 py-2 border ${theme.border} ${theme.btnCancel} flex items-center gap-1.5`}
         >
-          <Download className="w-3.5 h-3.5" /> {t("CSV thời gian", "Timing CSV")}
+          <Download className="w-3.5 h-3.5" /> {t("CSV thời gian (2 file)", "Timing CSV (2 files)")}
         </button>
 
         <button
@@ -2474,7 +2577,7 @@ export default function SyntheticVideoDetector() {
                       onClick={() => downloadTimingCsv(batchItems)}
                       className={`text-xs px-3 py-1.5 border ${theme.border} ${theme.btnCancel} flex items-center gap-1.5`}
                     >
-                      <Download className="w-3.5 h-3.5" /> {t("CSV thời gian", "Timing CSV")}
+                      <Download className="w-3.5 h-3.5" /> {t("CSV thời gian (2 file)", "Timing CSV (2 files)")}
                     </button>
                   </div>
                 </div>
@@ -2895,7 +2998,7 @@ export default function SyntheticVideoDetector() {
                             className={`mt-3 text-xs px-3 py-2 border ${theme.border} ${theme.btnCancel} flex items-center gap-1.5`}
                           >
                             <Download className="w-3.5 h-3.5" />{" "}
-                            {t("Xuất CSV thời gian chi tiết", "Export detailed timing CSV")}
+                            {t("Xuất CSV thời gian (2 file)", "Export timing CSV (2 files)")}
                           </button>
                         )}
                       </div>
@@ -3019,7 +3122,7 @@ export default function SyntheticVideoDetector() {
                         disabled={doneCount === 0}
                         className={`text-xs px-3 py-2 border ${theme.border} ${theme.btnCancel} flex items-center gap-2 transition-colors disabled:opacity-40`}
                       >
-                        <Download className="w-3.5 h-3.5" /> {t("CSV thời gian", "Timing CSV")}
+                        <Download className="w-3.5 h-3.5" /> {t("CSV thời gian (2 file)", "Timing CSV (2 files)")}
                       </button>
 
                       <button

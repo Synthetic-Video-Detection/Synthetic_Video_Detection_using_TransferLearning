@@ -343,32 +343,68 @@ function parseBackendResult(r: any): VideoResult {
   };
 }
 
+const POLL_INTERVAL_MS = 2000;
+const MAX_POLL_FAILURES = 60; // ~2 phút mất kết nối liên tục mới coi là lỗi
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Backend chạy dạng job: POST trả job_id ngay, sau đó poll /jobs/{id}. Nhờ vậy một
+// video chạy lặp nhiều lần (hàng chục phút) không bị ngrok/trình duyệt cắt giữa chừng.
 async function postToBackend(
   path: string,
   formData: FormData,
   repeats: number
 ): Promise<VideoResult> {
+  const headers = { "ngrok-skip-browser-warning": "true" };
   formData.append("repeats", String(repeats));
-  const response = await fetch(`${NGROK_BASE}${path}`, {
+
+  const submit = await fetch(`${NGROK_BASE}${path}`, {
     method: "POST",
     body: formData,
-    headers: {
-      "ngrok-skip-browser-warning": "true",
-    },
+    headers,
   });
 
-  if (!response.ok) {
-    let message = `Server returned status: ${response.status}`;
+  if (!submit.ok) {
+    let message = `Server returned status: ${submit.status}`;
     try {
-      const errBody = await response.json();
+      const errBody = await submit.json();
       if (errBody?.error) message = errBody.error;
     } catch {}
     throw new Error(message);
   }
 
+  const { job_id } = await submit.json();
+  if (!job_id) throw new Error("Backend không trả job_id.");
+
   // Chỉ dùng thời gian do backend đo; không tự tính phía trình duyệt
   // (sẽ lẫn thời gian upload/mạng). Thiếu -> hiển thị "Backend không phản hồi".
-  return parseBackendResult(await response.json());
+  let failures = 0;
+
+  while (true) {
+    await sleep(POLL_INTERVAL_MS);
+
+    let body: any;
+    try {
+      const res = await fetch(`${NGROK_BASE}/jobs/${job_id}`, { headers });
+      if (res.status === 404) {
+        body = { status: "error", error: "Job không tồn tại (backend đã khởi động lại?)." };
+      } else if (!res.ok) {
+        throw new Error(`status ${res.status}`);
+      } else {
+        body = await res.json();
+      }
+      failures = 0;
+    } catch {
+      failures += 1;
+      if (failures >= MAX_POLL_FAILURES) {
+        throw new Error("Mất kết nối tới backend khi chờ kết quả.");
+      }
+      continue;
+    }
+
+    if (body.status === "done") return parseBackendResult(body.result);
+    if (body.status === "error") throw new Error(body.error ?? "Backend báo lỗi.");
+  }
 }
 
 async function analyzeVideoFile(file: File, repeats = 1): Promise<VideoResult> {

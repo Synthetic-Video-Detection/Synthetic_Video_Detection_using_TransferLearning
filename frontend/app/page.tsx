@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useState, useRef, useEffect } from "react";
-import { Be_Vietnam_Pro } from "next/font/google";
+// Font loaded via Google Fonts CSS @import in INTEGRITY_CSS for universal Next.js & Canvas support
 import {
   Upload,
   Play,
@@ -40,12 +40,9 @@ import {
 
 // ── Fonts ────────────────────────────────────────────────────────────────
 // Be Vietnam Pro: sans-serif hiện đại, có đủ dấu tiếng Việt nên dùng chung cho vi/en.
-const beVietnam = Be_Vietnam_Pro({
-  subsets: ["latin", "latin-ext", "vietnamese"],
-  weight: ["300", "400", "500", "600", "700", "800"],
-  variable: "--font-be-vietnam",
-  display: "swap",
-});
+const beVietnam = {
+  variable: "font-be-vietnam",
+};
 
 // ── i18n ─────────────────────────────────────────────────────────────────
 // t(vi, en): trả về chuỗi theo ngôn ngữ hiện tại. CURRENT_LANG được component
@@ -68,9 +65,9 @@ function NeuralBackground({ isDarkMode }: { isDarkMode: boolean }) {
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const rand = mulberry32(20260614);
-    const lineRGB = isDarkMode ? "47,111,219" : "100,116,139";
-    const nodeRGB = isDarkMode ? "139,151,167" : "100,116,139";
-    const pulseRGB = isDarkMode ? "61,154,110" : "47,111,219";
+    const lineRGB = isDarkMode ? "47,111,219" : "37,99,235";
+    const nodeRGB = isDarkMode ? "148,163,184" : "71,85,105";
+    const pulseRGB = isDarkMode ? "96,165,250" : "47,111,219";
     const LINK = 150;
 
     type Node = { x: number; y: number; vx: number; vy: number; r: number };
@@ -352,7 +349,7 @@ async function postToBackend(
   const headers = { "ngrok-skip-browser-warning": "true" };
   formData.append("repeats", String(repeats));
 
-  const submit = await fetch(`${NGROK_BASE}${path}`, {
+  const submit = await fetch("https://derived-expanse-roundish.ngrok-free.dev" + path, {
     method: "POST",
     body: formData,
     headers,
@@ -379,7 +376,7 @@ async function postToBackend(
 
     let body: any;
     try {
-      const res = await fetch(`${NGROK_BASE}/jobs/${job_id}`, { headers });
+      const res = await fetch("https://derived-expanse-roundish.ngrok-free.dev/jobs/" + job_id, { headers });
       if (res.status === 404) {
         body = { status: "error", error: "Job không tồn tại (backend đã khởi động lại?)." };
       } else if (!res.ok) {
@@ -998,9 +995,15 @@ type Theme = {
 };
 
 const INTEGRITY_CSS = `
+  @import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
   .integrity-ui,
   .integrity-ui * {
     font-family: var(--font-ui), "Be Vietnam Pro", system-ui, -apple-system, "Segoe UI", sans-serif !important;
+  }
+
+  .integrity-ui .font-mono-tech {
+    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace !important;
   }
 
   html { scroll-behavior: smooth; }
@@ -1011,71 +1014,215 @@ const INTEGRITY_CSS = `
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
-  .integrity-ui h1 { letter-spacing: -0.02em; line-height: 1.1; }
-  .integrity-ui h2 { letter-spacing: 0.06em; }
+  .integrity-ui h1 { letter-spacing: -0.025em; line-height: 1.08; }
+  .integrity-ui h2 { letter-spacing: 0.08em; }
 
-  /* Chuyển động mượt cho mọi thành phần tương tác */
+  /* Chuyển động mượt, sắc nét theo phong cách kiến trúc kỹ thuật */
   .integrity-ui :where(div, button, a, span, label, input, select, textarea, p, tr, td, th) {
-    transition-property: color, background-color, border-color, opacity, transform, box-shadow, filter;
-    transition-duration: 0.25s;
-    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+    transition-property: color, background-color, border-color, opacity, transform, filter;
+    transition-duration: 0.2s;
+    transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
   }
 
-  /* Phẳng: bo góc tối thiểu, không bóng, không gradient */
-  .integrity-ui :where(button, input, select, textarea, label) { border-radius: 2px; }
-  .integrity-ui div[class*="border"] { border-radius: 2px; }
+  /* Kiến trúc phẳng chuẩn kỹ thuật: góc vuông sắc cạnh (0-2px), không bo tròn kiểu vibecode, không đổ bóng lố */
+  .integrity-ui :where(button, input, select, textarea, label) { border-radius: 1px; }
+  .integrity-ui div[class*="border"] { border-radius: 1px; }
   .integrity-ui .app-header,
   .integrity-ui .app-header div[class*="border"] { border-radius: 0; }
   .integrity-ui button[class*="border-b"] { border-radius: 0; }
-  .integrity-ui video { border-radius: 2px; }
+  .integrity-ui video { border-radius: 1px; }
 
-  /* Phản hồi khi di chuột / bấm */
-  .integrity-ui [class*="cursor-pointer"]:hover { transform: translateY(-1px); }
-  .integrity-ui button:not(:disabled):hover { filter: brightness(1.07); }
-  .integrity-ui button:not(:disabled):active { transform: scale(0.98); }
+  /* Đường viền góc kỹ thuật (Corner Ticks) tạo điểm nhấn thiết kế mà không dùng shadow hay bo góc */
+  .tech-panel {
+    position: relative;
+  }
+  .tech-panel::before,
+  .tech-panel::after {
+    content: "";
+    position: absolute;
+    width: 7px;
+    height: 7px;
+    pointer-events: none;
+    z-index: 2;
+  }
+  .tech-panel::before {
+    top: -1px;
+    left: -1px;
+    border-top: 2px solid #2f6fdb;
+    border-left: 2px solid #2f6fdb;
+  }
+  .tech-panel::after {
+    bottom: -1px;
+    right: -1px;
+    border-bottom: 2px solid #2f6fdb;
+    border-right: 2px solid #2f6fdb;
+  }
+
+  /* Thanh trượt Ngưỡng phân loại (Threshold) đồng bộ tông Xanh - Trắng */
+  .threshold-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 6px;
+    border-radius: 0;
+    background: linear-gradient(
+      90deg,
+      #1d4ed8 0%,
+      #2f6fdb var(--thresh-pct, 50%),
+      rgba(148, 163, 184, 0.28) var(--thresh-pct, 50%),
+      rgba(148, 163, 184, 0.28) 100%
+    );
+    outline: none;
+    cursor: pointer;
+    border: 1px solid rgba(47, 111, 219, 0.35);
+  }
+  .threshold-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 20px;
+    border-radius: 1px;
+    background: #ffffff;
+    border: 2px solid #2f6fdb;
+    cursor: pointer;
+    transition: transform 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+  }
+  .threshold-slider::-webkit-slider-thumb:hover {
+    background: #eff6ff;
+    border-color: #1d4ed8;
+    transform: scaleY(1.12);
+  }
+  .threshold-slider::-moz-range-thumb {
+    width: 14px;
+    height: 20px;
+    border-radius: 1px;
+    background: #ffffff;
+    border: 2px solid #2f6fdb;
+    cursor: pointer;
+  }
+
+  /* Phản hồi tương tác tinh tế */
+  .integrity-ui button:not(:disabled):hover { filter: brightness(1.06); }
+  .integrity-ui button:not(:disabled):active { transform: translateY(1px); }
   .integrity-ui :focus-visible { outline: 2px solid #2f6fdb; outline-offset: 2px; }
 
-  /* Khối kính 3D (lăng trụ + cột chữ I) */
-  .v3d-scene { position: relative; width: 100%; height: 100%; perspective: 1100px; }
+  /* ── Tổ hợp khối kính 3D chữ "VARUNA" tự xoay kèm khung dây 4 nút ── */
+  .v3d-scene {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    perspective: 1150px;
+    user-select: none;
+  }
   .v3d-float {
-    position: absolute; inset: 0; transform-style: preserve-3d;
-    animation: v3d-sway 16s ease-in-out infinite alternate;
+    position: absolute;
+    inset: 0;
+    transform-style: preserve-3d;
+    animation: v3d-orbit-main 9.5s ease-in-out infinite alternate;
   }
   .v3d-stage {
-    position: absolute; left: 50%; top: 50%; width: 0; height: 0;
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 0;
+    height: 0;
     transform-style: preserve-3d;
-    animation: v3d-bob 6s ease-in-out infinite alternate;
+    animation: v3d-bob-main 5.2s ease-in-out infinite alternate;
   }
-  .v3d-obj { position: absolute; transform-style: preserve-3d; }
-  .v3d-face { position: absolute; box-sizing: border-box; overflow: visible; }
-  .v3d-glass {
-    background: linear-gradient(135deg, rgba(255,255,255,0.50) 0%, rgba(90,215,255,0.34) 40%, rgba(40,130,255,0.50) 100%);
-    border: 1.5px solid rgba(255,255,255,0.62);
+  .v3d-word-group {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 0;
+    height: 0;
+    transform-style: preserve-3d;
+    animation: v3d-word-spin 11s ease-in-out infinite alternate;
   }
-  .v3d-glass-dim {
-    background: linear-gradient(160deg, rgba(120,225,255,0.28) 0%, rgba(30,100,235,0.46) 100%);
-    border: 1.5px solid rgba(255,255,255,0.45);
+  .v3d-letter-unit {
+    position: absolute;
+    transform-style: preserve-3d;
+    animation: v3d-letter-wave 4.2s ease-in-out infinite alternate;
   }
-  @keyframes v3d-sway {
-    from { transform: rotateX(-10deg) rotateY(-34deg); }
-    to { transform: rotateX(-4deg) rotateY(26deg); }
+  .v3d-wireframe-layer {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 0;
+    height: 0;
+    transform-style: preserve-3d;
+    animation: v3d-wire-float 7.5s ease-in-out infinite alternate;
   }
-  @keyframes v3d-bob {
-    from { transform: translateY(-8px); }
-    to { transform: translateY(8px); }
+  .v3d-face {
+    position: absolute;
+    box-sizing: border-box;
+    overflow: visible;
+    backface-visibility: visible;
+  }
+  .v3d-glass-side {
+    background: linear-gradient(
+      135deg,
+      rgba(224, 252, 255, 0.78) 0%,
+      rgba(34, 211, 238, 0.56) 50%,
+      rgba(14, 116, 235, 0.65) 100%
+    );
+    border: 1px solid rgba(255, 255, 255, 0.85);
+    box-shadow: inset 0 0 10px rgba(165, 248, 255, 0.45);
+  }
+  .v3d-glass-cap {
+    background: linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.88) 0%,
+      rgba(103, 232, 249, 0.68) 50%,
+      rgba(255, 255, 255, 0.88) 100%
+    );
+    border: 1px solid #ffffff;
+  }
+  .v3d-node-label {
+    animation: v3d-counter-sway 9.5s ease-in-out infinite alternate;
+    transform-style: preserve-3d;
+  }
+
+  @keyframes v3d-orbit-main {
+    0%   { transform: rotateX(-14deg) rotateY(-26deg) rotateZ(-1.5deg); }
+    50%  { transform: rotateX(-5deg)  rotateY(0deg)    rotateZ(0deg); }
+    100% { transform: rotateX(-12deg) rotateY(26deg)  rotateZ(1.5deg); }
+  }
+  @keyframes v3d-word-spin {
+    0%   { transform: translateZ(8px) rotateY(-10deg) rotateX(4deg); }
+    50%  { transform: translateZ(20px) rotateY(2deg)  rotateX(-3deg); }
+    100% { transform: translateZ(10px) rotateY(12deg) rotateX(3deg); }
+  }
+  @keyframes v3d-letter-wave {
+    0%   { transform: translate3d(var(--lx, 0px), calc(var(--ly, 0px) - 6px), calc(var(--lz, 0px) - 8px)) rotateY(-6deg) rotateX(4deg); }
+    100% { transform: translate3d(var(--lx, 0px), calc(var(--ly, 0px) + 6px), calc(var(--lz, 0px) + 12px)) rotateY(6deg) rotateX(-4deg); }
+  }
+  @keyframes v3d-counter-sway {
+    0%   { transform: rotateY(18deg) rotateX(8deg); }
+    50%  { transform: rotateY(0deg)  rotateX(3deg); }
+    100% { transform: rotateY(-18deg) rotateX(7deg); }
+  }
+  @keyframes v3d-bob-main {
+    0%   { transform: translateY(-6px); }
+    100% { transform: translateY(6px); }
+  }
+  @keyframes v3d-wire-float {
+    0%   { transform: translateZ(0px) rotateZ(-0.8deg); }
+    100% { transform: translateZ(10px) rotateZ(1deg); }
   }
 
   @keyframes fade-in-up {
-    from { opacity: 0; transform: translateY(12px); }
+    from { opacity: 0; transform: translateY(10px); }
     to { opacity: 1; transform: none; }
   }
-  .fade-in-up { animation: fade-in-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .fade-in-up { animation: fade-in-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) both; }
 
   @media (prefers-reduced-motion: reduce) {
     html { scroll-behavior: auto; }
     .fade-in-up { animation: none; }
-    .v3d-float, .v3d-stage { animation: none; }
-    .v3d-float { transform: rotateX(-8deg) rotateY(-18deg); }
+    .v3d-float, .v3d-stage, .v3d-word-group, .v3d-letter-unit, .v3d-wireframe-layer, .v3d-node-label {
+      animation: none !important;
+    }
+    .v3d-float { transform: rotateX(-10deg) rotateY(-16deg); }
     .integrity-ui :where(div, button, a, span, label, input, select, textarea, p, tr, td, th) {
       transition-duration: 0.01ms;
     }
@@ -1083,63 +1230,438 @@ const INTEGRITY_CSS = `
 `;
 
 
-// ── Khối kính 3D: lăng trụ tam giác + cột chữ nhật (CSS 3D, không cần thư viện) ──
-function Glass3D() {
-  const W = 190, H = 230, D = 84; // lăng trụ
-  const L = Math.sqrt((W / 2) ** 2 + H ** 2);
-  const th = (Math.atan(W / 2 / H) * 180) / Math.PI;
-  const cw = 66, ch = 250, cd = 66; // cột
+// ── Dữ liệu hình học 3D cho từng chữ cái trong "VARUNA" (viewBox 68 x 104) ──
+type LetterSpec = {
+  char: string;
+  outerPath: string;
+  innerBevelPath: string;
+  crossbarPoly?: string;
+  holePoly?: string;
+  topCaps: { x: number; y: number; w: number }[];
+  leftSideY?: { x: number; y1: number; y2: number };
+  rightSideY?: { x: number; y1: number; y2: number };
+};
 
-  const tri = (z: number, id: string, cls: string) => (
-    <svg
-      className="v3d-face"
-      style={{ left: 0, top: 0, width: W, height: H, transform: `translateZ(${z}px)` }}
-      viewBox={`0 0 ${W} ${H}`}
-    >
-      <defs>
-        <linearGradient id={id} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#ffffff" stopOpacity={cls === "f" ? 0.5 : 0.25} />
-          <stop offset="0.45" stopColor="#5ad7ff" stopOpacity={cls === "f" ? 0.38 : 0.3} />
-          <stop offset="1" stopColor="#2882ff" stopOpacity={cls === "f" ? 0.5 : 0.45} />
-        </linearGradient>
-      </defs>
-      <polygon
-        points={`${W / 2},1 1,${H - 1} ${W - 1},${H - 1}`}
-        fill={`url(#${id})`}
-        stroke="rgba(255,255,255,0.7)"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
+const VARUNA_LETTERS: LetterSpec[] = [
+  {
+    char: "V",
+    outerPath: "M 4 6 L 23 6 L 34 66 L 45 6 L 64 6 L 44 98 L 24 98 Z",
+    innerBevelPath: "M 9 11 L 20 11 L 34 78 L 48 11 L 59 11 L 41 93 L 27 93 Z",
+    topCaps: [
+      { x: 4, y: 6, w: 19 },
+      { x: 45, y: 6, w: 19 },
+    ],
+  },
+  {
+    char: "A",
+    outerPath:
+      "M 22 6 L 46 6 L 64 98 L 46 98 L 41 72 L 27 72 L 22 98 L 4 98 Z M 34 25 L 28 56 L 40 56 Z",
+    innerBevelPath:
+      "M 25 11 L 43 11 L 58 93 L 49 93 L 43 67 L 25 67 L 19 93 L 10 93 Z",
+    crossbarPoly: "23,56 45,56 42,72 26,72",
+    holePoly: "34,25 28,56 40,56",
+    topCaps: [{ x: 22, y: 6, w: 24 }],
+  },
+  {
+    char: "R",
+    outerPath:
+      "M 6 6 L 44 6 L 58 17 L 58 45 L 45 55 L 62 98 L 43 98 L 28 58 L 23 58 L 23 98 L 6 98 Z M 23 21 L 23 43 L 40 43 L 43 39 L 43 25 L 40 21 Z",
+    innerBevelPath:
+      "M 11 11 L 42 11 L 53 20 L 53 42 L 40 52 L 55 93 L 46 93 L 30 54 L 18 54 L 18 93 L 11 93 Z",
+    holePoly: "23,21 23,43 40,43 43,39 43,25 40,21",
+    topCaps: [{ x: 6, y: 6, w: 38 }],
+    leftSideY: { x: 6, y1: 6, y2: 98 },
+  },
+  {
+    char: "U",
+    outerPath:
+      "M 6 6 L 24 6 L 24 75 L 29 82 L 39 82 L 44 75 L 44 6 L 62 6 L 62 80 L 48 98 L 20 98 L 6 80 Z",
+    innerBevelPath:
+      "M 11 11 L 19 11 L 19 77 L 27 87 L 41 87 L 49 77 L 49 11 L 57 11 L 57 78 L 45 93 L 23 93 L 11 78 Z",
+    topCaps: [
+      { x: 6, y: 6, w: 18 },
+      { x: 44, y: 6, w: 18 },
+    ],
+    leftSideY: { x: 6, y1: 6, y2: 80 },
+    rightSideY: { x: 62, y1: 6, y2: 80 },
+  },
+  {
+    char: "N",
+    outerPath:
+      "M 6 6 L 23 6 L 45 62 L 45 6 L 62 6 L 62 98 L 45 98 L 23 42 L 23 98 L 6 98 Z",
+    innerBevelPath:
+      "M 11 11 L 20 11 L 48 76 L 48 11 L 57 11 L 57 93 L 48 93 L 20 28 L 20 93 L 11 93 Z",
+    topCaps: [
+      { x: 6, y: 6, w: 17 },
+      { x: 45, y: 6, w: 17 },
+    ],
+    leftSideY: { x: 6, y1: 6, y2: 98 },
+    rightSideY: { x: 62, y1: 6, y2: 98 },
+  },
+  {
+    char: "A",
+    outerPath:
+      "M 22 6 L 46 6 L 64 98 L 46 98 L 41 72 L 27 72 L 22 98 L 4 98 Z M 34 25 L 28 56 L 40 56 Z",
+    innerBevelPath:
+      "M 25 11 L 43 11 L 58 93 L 49 93 L 43 67 L 25 67 L 19 93 L 10 93 Z",
+    crossbarPoly: "23,56 45,56 42,72 26,72",
+    holePoly: "34,25 28,56 40,56",
+    topCaps: [{ x: 22, y: 6, w: 24 }],
+  },
+];
+
+// ── Khối kính 3D chữ "VARUNA" tự chuyển động kèm khung dây 4 điểm nút ──
+function Glass3D() {
+  const LW = 64;
+  const LH = 104;
+  const LD = 36; // Độ dày khối kính 3D của mỗi chữ cái
+  const halfLD = LD / 2;
+  const GAP = 6;
+  const totalW = VARUNA_LETTERS.length * LW + (VARUNA_LETTERS.length - 1) * GAP; // 414px
+
+  // Các lớp cắt chiều sâu Z giúp khối chữ 3D đặc, trong suốt và khúc xạ ánh sáng ở mọi góc xoay
+  const depthSlices = [-15, -12, -9, -6, -3, 0, 3, 6, 9, 12, 15];
+
+  // Tọa độ 4 nút vuông trắng (■) trong mặt phẳng khung dây 540x320 (tâm tại 270, 160)
+  const pTL = { x: 74, y: 58 };
+  const pTR = { x: 452, y: 42 };
+  const pBL = { x: 88, y: 274 };
+  const pBR = { x: 398, y: 278 };
 
   return (
     <div className="v3d-scene" aria-hidden>
+      {/* Mảng hình học chữ Π trắng bên trái tạo điểm nhấn thị giác theo mẫu */}
+      <div className="absolute left-0 top-[34%] w-[76px] h-[116px] pointer-events-none opacity-95 hidden sm:block">
+        <div className="absolute top-0 left-0 right-0 h-[18px] bg-white" />
+        <div className="absolute top-0 right-0 bottom-0 w-[18px] bg-white" />
+        <div className="absolute top-0 left-0 bottom-0 w-[15px] bg-white" />
+      </div>
+
       <div className="v3d-float">
         <div className="v3d-stage">
-          {/* Lăng trụ tam giác */}
-          <div
-            className="v3d-obj"
-            style={{ width: W, height: H, left: -W / 2 - 100, top: -H / 2 + 12, transform: "translateZ(-10px)" }}
-          >
-            {tri(D / 2, "v3dTriFront", "f")}
-            {tri(-D / 2, "v3dTriBack", "b")}
-            <div className="v3d-face v3d-glass-dim" style={{ width: W, height: D, left: 0, top: H - D / 2, transform: "rotateX(90deg)" }} />
-            <div className="v3d-face v3d-glass" style={{ width: D, height: L, left: W / 4 - D / 2, top: H / 2 - L / 2, transform: `rotateZ(${th}deg) rotateY(90deg)` }} />
-            <div className="v3d-face v3d-glass-dim" style={{ width: D, height: L, left: (3 * W) / 4 - D / 2, top: H / 2 - L / 2, transform: `rotateZ(${-th}deg) rotateY(90deg)` }} />
+          {/* ── CẠNH KHUNG DÂY TRẮNG PHÍA SAU ĐI XUYÊN QUA PHÍA SAU CHỮ VARUNA ── */}
+          <div className="v3d-wireframe-layer" style={{ transform: "translateZ(-36px)" }}>
+            <svg
+              className="v3d-face pointer-events-none"
+              style={{ width: 540, height: 320, left: -270, top: -160 }}
+              viewBox="0 0 540 320"
+            >
+              <line
+                x1={pTL.x}
+                y1={pTL.y}
+                x2={pTR.x}
+                y2={pTR.y}
+                stroke="#ffffff"
+                strokeWidth="1.6"
+                strokeOpacity="0.92"
+              />
+            </svg>
           </div>
 
-          {/* Cột chữ I */}
-          <div
-            className="v3d-obj"
-            style={{ width: cw, height: ch, left: -cw / 2 + 105, top: -ch / 2 - 4, transform: "translateZ(30px)" }}
-          >
-            <div className="v3d-face v3d-glass" style={{ width: cw, height: ch, left: 0, top: 0, transform: `translateZ(${cd / 2}px)` }} />
-            <div className="v3d-face v3d-glass-dim" style={{ width: cw, height: ch, left: 0, top: 0, transform: `rotateY(180deg) translateZ(${cd / 2}px)` }} />
-            <div className="v3d-face v3d-glass-dim" style={{ width: cd, height: ch, left: (cw - cd) / 2, top: 0, transform: `rotateY(90deg) translateZ(${cw / 2}px)` }} />
-            <div className="v3d-face v3d-glass" style={{ width: cd, height: ch, left: (cw - cd) / 2, top: 0, transform: `rotateY(-90deg) translateZ(${cw / 2}px)` }} />
-            <div className="v3d-face v3d-glass" style={{ width: cw, height: cd, left: 0, top: (ch - cd) / 2, transform: `rotateX(90deg) translateZ(${ch / 2}px)` }} />
-            <div className="v3d-face v3d-glass-dim" style={{ width: cw, height: cd, left: 0, top: (ch - cd) / 2, transform: `rotateX(-90deg) translateZ(${ch / 2}px)` }} />
+          {/* ── CỤM 6 KHỐI CHỮ KÍNH 3D "V · A · R · U · N · A" TỰ XOAY & LƯỢN SÓNG 3D ── */}
+          <div className="v3d-word-group">
+            {VARUNA_LETTERS.map((item, idx) => {
+              const xPos = -totalW / 2 + idx * (LW + GAP);
+              // Tạo độ cong vòm 3D nhẹ giữa các chữ cái để nhìn rõ các mặt vát 3D
+              const archZ = Math.round(Math.sin((idx / 5) * Math.PI) * 14);
+              const archY = -LH / 2 - Math.round(Math.sin((idx / 5) * Math.PI) * 6);
+              const gradId = `varuna_g_${idx}`;
+              const bevelId = `varuna_b_${idx}`;
+
+              return (
+                <div
+                  key={idx}
+                  className="v3d-letter-unit"
+                  style={
+                    {
+                      width: LW,
+                      height: LH,
+                      "--lx": `${xPos}px`,
+                      "--ly": `${archY}px`,
+                      "--lz": `${archZ}px`,
+                      animationDelay: `${idx * -0.45}s`,
+                    } as React.CSSProperties
+                  }
+                >
+                  {/* Mặt sau của chữ cái (z = -halfLD) */}
+                  <svg
+                    className="v3d-face"
+                    style={{
+                      left: 0,
+                      top: 0,
+                      width: LW,
+                      height: LH,
+                      transform: `translateZ(${-halfLD}px)`,
+                    }}
+                    viewBox="0 0 68 104"
+                  >
+                    <path
+                      d={item.outerPath}
+                      fillRule="evenodd"
+                      fill="rgba(14, 116, 235, 0.52)"
+                      stroke="rgba(165, 248, 255, 0.68)"
+                      strokeWidth="2"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+
+                  {/* Các lớp kính 3D xếp đặc theo trục Z tạo thành vách thủy tinh cyan liền khối */}
+                  {depthSlices.map((zVal, sIdx) => (
+                    <svg
+                      key={sIdx}
+                      className="v3d-face"
+                      style={{
+                        left: 0,
+                        top: 0,
+                        width: LW,
+                        height: LH,
+                        transform: `translateZ(${zVal}px)`,
+                      }}
+                      viewBox="0 0 68 104"
+                    >
+                      <path
+                        d={item.outerPath}
+                        fillRule="evenodd"
+                        fill={
+                          sIdx % 3 === 0
+                            ? "rgba(34, 211, 238, 0.16)"
+                            : "rgba(14, 165, 233, 0.1)"
+                        }
+                        stroke={
+                          sIdx === Math.floor(depthSlices.length / 2)
+                            ? "rgba(255, 255, 255, 0.85)"
+                            : "rgba(103, 232, 249, 0.55)"
+                        }
+                        strokeWidth={
+                          sIdx === Math.floor(depthSlices.length / 2) ? "2.2" : "1.6"
+                        }
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  ))}
+
+                  {/* Nắp kính 3D trên đỉnh mỗi chữ cái */}
+                  {item.topCaps.map((cap, cIdx) => (
+                    <div
+                      key={cIdx}
+                      className="v3d-face v3d-glass-cap"
+                      style={{
+                        width: (cap.w / 68) * LW,
+                        height: LD,
+                        left: (cap.x / 68) * LW,
+                        top: (cap.y / 104) * LH - LD / 2,
+                        transform: "rotateX(90deg)",
+                      }}
+                    />
+                  ))}
+
+                  {/* Vách kính 3D phẳng bên trái (nếu có cạnh thẳng) */}
+                  {item.leftSideY && (
+                    <div
+                      className="v3d-face v3d-glass-side"
+                      style={{
+                        width: LD,
+                        height: ((item.leftSideY.y2 - item.leftSideY.y1) / 104) * LH,
+                        left: (item.leftSideY.x / 68) * LW - LD / 2,
+                        top: (item.leftSideY.y1 / 104) * LH,
+                        transform: "rotateY(-90deg)",
+                      }}
+                    />
+                  )}
+
+                  {/* Vách kính 3D phẳng bên phải (nếu có cạnh thẳng) */}
+                  {item.rightSideY && (
+                    <div
+                      className="v3d-face v3d-glass-side"
+                      style={{
+                        width: LD,
+                        height: ((item.rightSideY.y2 - item.rightSideY.y1) / 104) * LH,
+                        left: (item.rightSideY.x / 68) * LW - LD / 2,
+                        top: (item.rightSideY.y1 / 104) * LH,
+                        transform: "rotateY(90deg)",
+                      }}
+                    />
+                  )}
+
+                  {/* Mặt chính diện của chữ cái (z = +halfLD) với hiệu ứng vát cạnh thủy tinh cyan sắc nét */}
+                  <svg
+                    className="v3d-face"
+                    style={{
+                      left: 0,
+                      top: 0,
+                      width: LW,
+                      height: LH,
+                      transform: `translateZ(${halfLD}px)`,
+                    }}
+                    viewBox="0 0 68 104"
+                  >
+                    <defs>
+                      <linearGradient id={gradId} x1="0.1" y1="0" x2="0.9" y2="1">
+                        <stop offset="0%" stopColor="#e0fcff" stopOpacity="0.88" />
+                        <stop offset="38%" stopColor="#22d3ee" stopOpacity="0.72" />
+                        <stop offset="78%" stopColor="#0284c7" stopOpacity="0.76" />
+                        <stop offset="100%" stopColor="#1e3a8a" stopOpacity="0.84" />
+                      </linearGradient>
+                      <linearGradient id={bevelId} x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0%" stopColor="#ffffff" stopOpacity="0.98" />
+                        <stop offset="50%" stopColor="#67e8f9" stopOpacity="0.82" />
+                        <stop offset="100%" stopColor="#ffffff" stopOpacity="0.92" />
+                      </linearGradient>
+                    </defs>
+
+                    {/* Thân chính của chữ cái */}
+                    <path
+                      d={item.outerPath}
+                      fillRule="evenodd"
+                      fill={`url(#${gradId})`}
+                      stroke={`url(#${bevelId})`}
+                      strokeWidth="2.8"
+                      strokeLinejoin="round"
+                    />
+
+                    {/* Đường vát cạnh khúc xạ bên trong từng chữ cái */}
+                    <path
+                      d={item.innerBevelPath}
+                      fill="rgba(255, 255, 255, 0.14)"
+                      stroke="rgba(224, 252, 255, 0.82)"
+                      strokeWidth="1.2"
+                      strokeLinejoin="round"
+                    />
+
+                    {/* Thanh ngang nổi bật cho hai chữ A */}
+                    {item.crossbarPoly && (
+                      <polygon
+                        points={item.crossbarPoly}
+                        fill="rgba(224, 252, 255, 0.82)"
+                        stroke="#ffffff"
+                        strokeWidth="1.5"
+                      />
+                    )}
+
+                    {/* Khoang rỗng tương phản cao cho chữ A và R */}
+                    {item.holePoly && (
+                      <polygon
+                        points={item.holePoly}
+                        fill="rgba(15, 35, 145, 0.55)"
+                        stroke="#ffffff"
+                        strokeWidth="1.4"
+                      />
+                    )}
+                  </svg>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* ── LỚP KHUNG DÂY TRẮNG & 4 NÚT VUÔNG (■) BAO QUANH CHỮ VARUNA ── */}
+          <div className="v3d-wireframe-layer" style={{ transform: "translateZ(46px)" }}>
+            <svg
+              className="v3d-face pointer-events-none"
+              style={{ width: 540, height: 320, left: -270, top: -160 }}
+              viewBox="0 0 540 320"
+            >
+              <line
+                x1={pTL.x}
+                y1={pTL.y}
+                x2={pBL.x}
+                y2={pBL.y}
+                stroke="#ffffff"
+                strokeWidth="1.6"
+                strokeOpacity="0.95"
+              />
+              <line
+                x1={pBL.x}
+                y1={pBL.y}
+                x2={pBR.x}
+                y2={pBR.y}
+                stroke="#ffffff"
+                strokeWidth="1.6"
+                strokeOpacity="0.95"
+              />
+              <line
+                x1={pBR.x}
+                y1={pBR.y}
+                x2={pTR.x}
+                y2={pTR.y}
+                stroke="#ffffff"
+                strokeWidth="1.6"
+                strokeOpacity="0.95"
+              />
+
+              {[pTL, pTR, pBL, pBR].map((pt, idx) => (
+                <rect
+                  key={idx}
+                  x={pt.x - 5.5}
+                  y={pt.y - 5.5}
+                  width="11"
+                  height="11"
+                  fill="#ffffff"
+                />
+              ))}
+            </svg>
+
+            {/* Nhãn 1 (Trên - Trái): Hiệu quả */}
+            <div
+              className="v3d-face v3d-node-label pointer-events-none"
+              style={{
+                left: -270 + pTL.x - 12,
+                top: -160 + pTL.y - 10,
+              }}
+            >
+              <div className="-translate-x-full text-right pr-2">
+                <span className="text-xs sm:text-[13px] font-semibold text-white tracking-wide whitespace-nowrap">
+                  {t("Hiệu quả", "Efficient")}
+                </span>
+              </div>
+            </div>
+
+            {/* Nhãn 2 (Trên - Phải): Kiểm chứng thông tin */}
+            <div
+              className="v3d-face v3d-node-label pointer-events-none"
+              style={{
+                left: -270 + pTR.x + 12,
+                top: -160 + pTR.y - 14,
+              }}
+            >
+              <div className="text-left pl-1 leading-tight">
+                <span className="text-xs sm:text-[13px] font-semibold text-white tracking-wide block whitespace-nowrap">
+                  {t("Kiểm chứng", "Information")}
+                </span>
+                <span className="text-xs sm:text-[13px] font-semibold text-white/90 tracking-wide block whitespace-nowrap">
+                  {t("thông tin", "verification")}
+                </span>
+              </div>
+            </div>
+
+            {/* Nhãn 3 (Dưới - Trái): Nhanh chóng */}
+            <div
+              className="v3d-face v3d-node-label pointer-events-none"
+              style={{
+                left: -270 + pBL.x - 12,
+                top: -160 + pBL.y - 10,
+              }}
+            >
+              <div className="-translate-x-full text-right pr-2 leading-tight">
+                <span className="text-xs sm:text-[13px] font-semibold text-white tracking-wide block whitespace-nowrap">
+                  {t("Nhanh chóng", "Fast & instant")}
+                </span>
+              </div>
+            </div>
+
+            {/* Nhãn 4 (Dưới - Phải): Tiện ích */}
+            <div
+              className="v3d-face v3d-node-label pointer-events-none"
+              style={{
+                left: -270 + pBR.x + 12,
+                top: -160 + pBR.y - 10,
+              }}
+            >
+              <div className="text-left pl-1 leading-tight">
+                <span className="text-xs sm:text-[13px] font-semibold text-white tracking-wide block whitespace-nowrap">
+                  {t("Tiện ích", "Practical utility")}
+                </span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -1200,15 +1722,15 @@ function ResultSummary({
         </div>
 
         <div
-          className={`relative w-full ${theme.bgCard} h-3 overflow-hidden border ${theme.border}`}
+          className={`relative w-full ${theme.bgCard} h-3.5 overflow-hidden border ${theme.border}`}
         >
           <div
-            className="bg-[#d6504c] h-full transition-all duration-1000"
+            className={`${classified.isSynthetic ? "bg-[#d6504c]" : "bg-[#2f6fdb]"} h-full transition-all duration-700`}
             style={{ width: `${prob * 100}%` }}
           ></div>
 
           <div
-            className="absolute top-0 bottom-0 w-0.5 bg-white/80"
+            className="absolute top-0 bottom-0 w-[2px] bg-[#2f6fdb] shadow-[0_0_0_1px_#ffffff]"
             style={{ left: `${threshold * 100}%` }}
             title={`Threshold: ${(threshold * 100).toFixed(0)}%`}
           ></div>
@@ -1330,19 +1852,20 @@ function ScoreChart({
           type="monotone"
           dataKey="score"
           name="Synthetic score"
-          stroke="#3d9a6e"
-          strokeWidth={2}
+          stroke="#2f6fdb"
+          strokeWidth={2.2}
           dot={false}
           isAnimationActive={false}
         />
         <ReferenceLine
           y={threshold}
-          stroke={isDarkMode ? "#8b97a7" : "#6b7280"}
-          strokeDasharray="4 4"
+          stroke={isDarkMode ? "#60a5fa" : "#1d4ed8"}
+          strokeWidth={1.5}
+          strokeDasharray="5 4"
           label={{
-            value: t("Ngưỡng", "Threshold"),
+            value: `${t("Ngưỡng", "Threshold")} ${(threshold * 100).toFixed(0)}%`,
             position: "right",
-            fill: isDarkMode ? "#8b97a7" : "#6b7280",
+            fill: isDarkMode ? "#60a5fa" : "#1d4ed8",
             fontSize: 11,
           }}
         />
@@ -1685,13 +2208,15 @@ function DashboardView({
         className={`${theme.bgCard} border ${theme.border} p-4 mb-4 flex flex-wrap items-center gap-6`}
       >
         <div className="flex items-center gap-3 flex-1 min-w-[280px]">
-          <SlidersHorizontal className="w-4 h-4 text-[#2f6fdb] shrink-0" />
+          <div className="w-8 h-8 bg-[#2f6fdb]/10 border border-[#2f6fdb]/40 flex items-center justify-center shrink-0">
+            <SlidersHorizontal className="w-4 h-4 text-[#2f6fdb]" />
+          </div>
           <div className="flex-1">
-            <div className="flex justify-between text-xs mb-1">
-              <span className={theme.textSub}>
+            <div className="flex items-center justify-between text-xs mb-1.5">
+              <span className={`${theme.textHeading} font-semibold flex items-center gap-2`}>
                 {t("Ngưỡng phân loại (threshold)", "Classification threshold")}
               </span>
-              <span className={`font-bold ${theme.textHeading}`}>
+              <span className="font-mono-tech text-xs font-bold px-2 py-0.5 bg-[#2f6fdb] text-white border border-white/25">
                 {(threshold * 100).toFixed(0)}%
               </span>
             </div>
@@ -1703,7 +2228,8 @@ function DashboardView({
               step={0.01}
               value={threshold}
               onChange={(e) => setThreshold(Number(e.target.value))}
-              className="w-full accent-[#3d9a6e] cursor-pointer"
+              style={{ "--thresh-pct": `${threshold * 100}%` } as React.CSSProperties}
+              className="threshold-slider"
             />
           </div>
         </div>
@@ -1809,7 +2335,7 @@ function DashboardView({
           <Upload className="w-3.5 h-3.5" /> {t("Thêm video", "Add videos")}
           <input
             type="file"
-            accept="video/*"
+            accept={"video/" + "*"}
             multiple
             className="hidden"
             onChange={handleBatchFilesSelected}
@@ -1878,7 +2404,7 @@ function DashboardView({
             onChange={(e) => setBatchUrlText(e.target.value)}
             placeholder={t("Dán link YouTube / TikTok / Facebook..., mỗi dòng 1 link", "Paste YouTube / TikTok / Facebook links, one per line")}
             rows={3}
-            className={`w-full px-3 py-2 border ${theme.border} ${theme.inputBg} ${theme.textHeading} text-xs outline-none focus:border-[#3d9a6e] mb-2`}
+            className={`w-full px-3 py-2 border ${theme.border} ${theme.inputBg} ${theme.textHeading} text-xs outline-none focus:border-[#2f6fdb] mb-2`}
           />
 
           <div className="flex justify-end gap-2">
@@ -1906,7 +2432,7 @@ function DashboardView({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder={t("Tìm tên hoặc URL video...", "Search by video name or URL...")}
-          className={`flex-1 min-w-[200px] text-xs px-3 py-2 border ${theme.border} ${theme.inputBg} ${theme.textHeading} outline-none focus:border-[#3d9a6e]`}
+          className={`flex-1 min-w-[200px] text-xs px-3 py-2 border ${theme.border} ${theme.inputBg} ${theme.textHeading} outline-none focus:border-[#2f6fdb]`}
         />
 
         <select
@@ -2223,6 +2749,8 @@ export default function SyntheticVideoDetector() {
   >("all");
 
   const [isDarkMode, setIsDarkMode] = useState(true);
+  const [noticeMessage, setNoticeMessage] = useState<string | null>(null);
+  const alert = (msg: string) => setNoticeMessage(msg);
   const [lang, setLang] = useState<Lang>("vi");
   CURRENT_LANG = lang;
 
@@ -2656,41 +3184,55 @@ export default function SyntheticVideoDetector() {
       </header>
 
       <main key={appMode} className="relative z-10 max-w-7xl mx-auto px-6 py-10 fade-in-up">
+        {noticeMessage && (
+          <div className="mb-6 p-4 border border-[#d6504c] bg-[#d6504c]/10 text-[#d6504c] flex items-center justify-between gap-4 text-xs font-medium">
+            <div className="flex items-center gap-2.5">
+              <ShieldAlert className="w-4 h-4 shrink-0" />
+              <span>{noticeMessage}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setNoticeMessage(null)}
+              className="px-2.5 py-1 border border-[#d6504c]/40 hover:bg-[#d6504c]/20 text-xs font-semibold"
+            >
+              OK
+            </button>
+          </div>
+        )}
         {appMode === "classic" ? (
           <>
             <div
-              className={`relative overflow-hidden mb-8 border ${
-                isDarkMode ? "bg-[#1c2a8c] border-[#27313f]" : "bg-[#3140f0] border-[#3140f0]"
+              className={`tech-panel relative overflow-hidden mb-8 border ${
+                isDarkMode
+                  ? "bg-[#1d2cf3] border-[#2f6fdb]/60"
+                  : "bg-[#2434f7] border-[#1d4ed8]"
               }`}
             >
-              {/* Các ô vuông mờ kiểu pixel */}
-              <div aria-hidden className="absolute left-[28%] top-0 w-[14%] h-[38%] bg-white/[0.05]" />
-              <div aria-hidden className="absolute left-[58%] top-0 w-[10%] h-[26%] bg-white/[0.06]" />
-              <div aria-hidden className="absolute left-0 top-[48%] w-[12%] h-[34%] bg-white/[0.05]" />
-              <div aria-hidden className="absolute right-0 top-[10%] w-[16%] h-[32%] bg-white/[0.05]" />
-              <div aria-hidden className="absolute left-[40%] bottom-0 w-[18%] h-[30%] bg-white/[0.04]" />
+              {/* Các mảng ô vuông tông xanh đậm/nhạt kiểu pixel kiến trúc giống ảnh mẫu */}
+              <div aria-hidden className="absolute left-[26%] top-0 w-[15%] h-[42%] bg-white/[0.06]" />
+              <div aria-hidden className="absolute left-[54%] top-0 w-[12%] h-[28%] bg-[#0a1499]/35" />
+              <div aria-hidden className="absolute left-[66%] top-[28%] w-[18%] h-[44%] bg-white/[0.05]" />
+              <div aria-hidden className="absolute left-0 top-[52%] w-[14%] h-[36%] bg-white/[0.05]" />
+              <div aria-hidden className="absolute right-0 top-[8%] w-[16%] h-[36%] bg-white/[0.06]" />
+              <div aria-hidden className="absolute left-[42%] bottom-0 w-[18%] h-[32%] bg-[#0a1499]/30" />
 
-              <div className="relative grid lg:grid-cols-2 items-center gap-4 p-8 sm:p-12">
-                <div>
-                  <p className="text-xs font-semibold tracking-[0.25em] text-white/70 mb-4">
+              <div className="relative grid lg:grid-cols-12 items-center gap-4 px-8 py-8 sm:px-12 sm:py-10">
+                <div className="lg:col-span-5">
+                  <p className="text-xs font-semibold tracking-[0.25em] text-white/75 mb-4">
                     VARUNA
                   </p>
-                  <h1 className="text-4xl sm:text-5xl font-extrabold uppercase text-white mb-5">
+                  <h1 className="text-4xl sm:text-5xl font-extrabold uppercase text-white mb-5 tracking-tight">
                     Synthetic Video Detection
                   </h1>
-                  <p className="text-white/80 max-w-xl text-base">
-                    {t("Tải lên một video để dự đoán video có phải được các model Diffusion tạo ra.", "Upload a video to predict whether it was generated by Diffusion models.")}
+                  <p className="text-white/85 max-w-lg text-base leading-relaxed">
+                    {t(
+                      "Tải lên một video để dự đoán video có phải được các model Diffusion tạo ra.",
+                      "Upload a video to predict whether it was generated by Diffusion models."
+                    )}
                   </p>
-                  <div className="flex flex-wrap gap-x-6 gap-y-1 mt-6">
-                    {["#VARUNA", "#DIFFUSION", "#SPATIOTEMPORAL"].map((tag) => (
-                      <span key={tag} className="text-[11px] font-medium tracking-wider text-white/55">
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
                 </div>
 
-                <div className="hidden lg:block h-[340px]">
+                <div className="lg:col-span-7 h-[320px] sm:h-[360px] relative">
                   <Glass3D />
                 </div>
               </div>
@@ -2797,19 +3339,37 @@ export default function SyntheticVideoDetector() {
             )}
 
             <div
-              className={`${theme.bgCard} border ${theme.border} p-4 mb-6 flex flex-wrap items-center gap-6`}
+              className={`tech-panel ${theme.bgCard} border ${theme.border} p-5 mb-6 flex flex-wrap items-center gap-6`}
             >
-              <div className="flex items-center gap-3 flex-1 min-w-[280px]">
-                <SlidersHorizontal className="w-4 h-4 text-[#2f6fdb] shrink-0" />
+              <div className="flex items-start gap-3.5 flex-1 min-w-[280px]">
+                <div className="w-9 h-9 bg-[#2f6fdb] text-white flex items-center justify-center shrink-0 mt-0.5">
+                  <SlidersHorizontal className="w-4 h-4" />
+                </div>
 
                 <div className="flex-1">
-                  <div className="flex justify-between text-xs mb-1">
-                    <span className={theme.textSub}>
+                  <div className="flex items-center justify-between text-xs mb-2">
+                    <span className={`${theme.textHeading} font-semibold uppercase tracking-wider flex items-center gap-2`}>
                       {t("Ngưỡng phân loại (threshold)", "Classification threshold")}
                     </span>
-                    <span className={`font-bold ${theme.textHeading}`}>
-                      {(threshold * 100).toFixed(0)}%
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      {[0.3, 0.5, 0.7].map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => setThreshold(preset)}
+                          className={`font-mono-tech text-[10px] px-1.5 py-0.5 border transition-colors ${
+                            Math.abs(threshold - preset) < 0.005
+                              ? "bg-[#2f6fdb]/15 border-[#2f6fdb] text-[#2f6fdb] font-bold"
+                              : `${theme.border} ${theme.textSub} hover:border-[#2f6fdb]/50`
+                          }`}
+                        >
+                          {Math.round(preset * 100)}%
+                        </button>
+                      ))}
+                      <span className="font-mono-tech text-xs font-bold px-2.5 py-0.5 bg-[#2f6fdb] text-white border border-white/30 ml-1">
+                        {(threshold * 100).toFixed(0)}%
+                      </span>
+                    </div>
                   </div>
 
                   <input
@@ -2819,11 +3379,21 @@ export default function SyntheticVideoDetector() {
                     step={0.01}
                     value={threshold}
                     onChange={(e) => setThreshold(Number(e.target.value))}
-                    className="w-full accent-[#3d9a6e] cursor-pointer"
+                    style={{ "--thresh-pct": `${threshold * 100}%` } as React.CSSProperties}
+                    className="threshold-slider"
                   />
 
-                  <p className={`text-[11px] ${theme.textSub} mt-1`}>
-                    {t("Video có xác suất AI lớn hơn", "Videos with an AI probability above")} {(threshold * 100).toFixed(0)}%
+                  <div className="flex justify-between font-mono-tech text-[10px] text-[#2f6fdb]/80 mt-1">
+                    <span>0% (REAL)</span>
+                    <span>25%</span>
+                    <span>50%</span>
+                    <span>75%</span>
+                    <span>100% (AI)</span>
+                  </div>
+
+                  <p className={`text-[11px] ${theme.textSub} mt-1.5`}>
+                    {t("Video có xác suất AI lớn hơn", "Videos with an AI probability above")}{" "}
+                    <span className="font-semibold text-[#2f6fdb]">{(threshold * 100).toFixed(0)}%</span>{" "}
                     {t("sẽ bị coi là AI-generated. Chỉnh xong áp dụng ngay, không cần chạy lại pipeline.", "are treated as AI-generated. Changes apply instantly, no need to rerun the pipeline.")}
                   </p>
                 </div>
@@ -2898,13 +3468,13 @@ export default function SyntheticVideoDetector() {
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                   <div className="lg:col-span-7 space-y-6">
                     <div
-                      className={`${theme.bgCard} border ${theme.border} p-6`}
+                      className={`tech-panel ${theme.bgCard} border ${theme.border} p-6`}
                     >
                       <div className="flex items-center justify-between mb-4">
                         <h2
                           className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider flex items-center gap-2`}
                         >
-                          <Play className="w-4 h-4 text-[#3d9a6e]" /> {t("Video đầu vào", "Video input")}
+                          <Play className="w-4 h-4 text-[#2f6fdb]" /> {t("Video đầu vào", "Video input")}
                         </h2>
 
                         {singleSourceMode === "file" && selectedFile && (
@@ -2935,9 +3505,9 @@ export default function SyntheticVideoDetector() {
                       {singleSourceMode === "file" ? (
                         !selectedFile ? (
                           <label
-                            className={`border border-dashed ${theme.border} hover:border-[#3d9a6e] ${theme.inputBg} p-12 flex flex-col items-center justify-center cursor-pointer transition-colors group`}
+                            className={`border border-dashed ${theme.border} hover:border-[#2f6fdb] ${theme.inputBg} p-12 flex flex-col items-center justify-center cursor-pointer transition-colors group`}
                           >
-                            <Upload className="w-12 h-12 text-[#a7b1bf] group-hover:text-[#3d9a6e] mb-4 transition-colors" />
+                            <Upload className="w-12 h-12 text-[#a7b1bf] group-hover:text-[#2f6fdb] mb-4 transition-colors" />
 
                             <p
                               className={`text-sm ${theme.textHeading} font-medium mb-1`}
@@ -2954,7 +3524,7 @@ export default function SyntheticVideoDetector() {
 
                             <input
                               type="file"
-                              accept="video/*"
+                              accept={"video/" + "*"}
                               className="hidden"
                               onChange={handleFileChange}
                             />
@@ -3015,7 +3585,7 @@ export default function SyntheticVideoDetector() {
                               setSingleUrlInput(e.target.value)
                             }
                             placeholder={t("Dán link YouTube / TikTok / Facebook...", "Paste a YouTube / TikTok / Facebook link...")}
-                            className={`w-full px-4 py-3 border ${theme.border} ${theme.inputBg} ${theme.textHeading} text-sm outline-none focus:border-[#3d9a6e]`}
+                            className={`w-full px-4 py-3 border ${theme.border} ${theme.inputBg} ${theme.textHeading} text-sm outline-none focus:border-[#2f6fdb]`}
                           />
 
                           <div
@@ -3071,7 +3641,7 @@ export default function SyntheticVideoDetector() {
 
                   <div className="lg:col-span-5 space-y-6">
                     <div
-                      className={`${theme.bgCard} border ${theme.border} p-6 h-full flex flex-col justify-between`}
+                      className={`tech-panel ${theme.bgCard} border ${theme.border} p-6 h-full flex flex-col justify-between`}
                     >
                       <div>
                         <h2
@@ -3189,13 +3759,13 @@ export default function SyntheticVideoDetector() {
             {activeTab === "batch" && (
               <div className="space-y-6">
                 <div
-                  className={`${theme.bgCard} border ${theme.border} p-6`}
+                  className={`tech-panel ${theme.bgCard} border ${theme.border} p-6`}
                 >
                   <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
                     <h2
                       className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider flex items-center gap-2`}
                     >
-                      <Layers className="w-4 h-4 text-[#3d9a6e]" /> {t("Xử lý nhiều video", "Process multiple videos")}
+                      <Layers className="w-4 h-4 text-[#2f6fdb]" /> {t("Xử lý nhiều video", "Process multiple videos")}
                     </h2>
 
                     <div className="flex flex-wrap items-center gap-3">
@@ -3211,7 +3781,7 @@ export default function SyntheticVideoDetector() {
                         <Upload className="w-3.5 h-3.5" /> {t("Thêm video", "Add videos")}
                         <input
                           type="file"
-                          accept="video/*"
+                          accept={"video/" + "*"}
                           multiple
                           className="hidden"
                           onChange={handleBatchFilesSelected}
@@ -3295,7 +3865,7 @@ export default function SyntheticVideoDetector() {
                           t("Dán link YouTube / TikTok / Facebook..., mỗi dòng 1 link", "Paste YouTube / TikTok / Facebook links, one per line")
                         }
                         rows={3}
-                        className={`w-full px-3 py-2 border ${theme.border} ${theme.inputBg} ${theme.textHeading} text-xs outline-none focus:border-[#3d9a6e] mb-2`}
+                        className={`w-full px-3 py-2 border ${theme.border} ${theme.inputBg} ${theme.textHeading} text-xs outline-none focus:border-[#2f6fdb] mb-2`}
                       />
 
                       <div className="flex justify-end gap-2">
@@ -3350,9 +3920,9 @@ export default function SyntheticVideoDetector() {
 
                   {batchItems.length === 0 ? (
                     <label
-                      className={`border border-dashed ${theme.border} hover:border-[#3d9a6e] ${theme.inputBg} p-12 flex flex-col items-center justify-center cursor-pointer transition-colors group`}
+                      className={`border border-dashed ${theme.border} hover:border-[#2f6fdb] ${theme.inputBg} p-12 flex flex-col items-center justify-center cursor-pointer transition-colors group`}
                     >
-                      <Upload className="w-12 h-12 text-[#a7b1bf] group-hover:text-[#3d9a6e] mb-4 transition-colors" />
+                      <Upload className="w-12 h-12 text-[#a7b1bf] group-hover:text-[#2f6fdb] mb-4 transition-colors" />
 
                       <p
                         className={`text-sm ${theme.textHeading} font-medium mb-1`}
@@ -3367,7 +3937,7 @@ export default function SyntheticVideoDetector() {
 
                       <input
                         type="file"
-                        accept="video/*"
+                        accept={"video/" + "*"}
                         multiple
                         className="hidden"
                         onChange={handleBatchFilesSelected}
@@ -3395,12 +3965,12 @@ export default function SyntheticVideoDetector() {
                   <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                     <div className="lg:col-span-7 space-y-6">
                       <div
-                        className={`${theme.bgCard} border ${theme.border} p-6`}
+                        className={`tech-panel ${theme.bgCard} border ${theme.border} p-6`}
                       >
                         <h2
                           className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider mb-4 flex items-center gap-2 truncate`}
                         >
-                          <Play className="w-4 h-4 text-[#3d9a6e] shrink-0" />{" "}
+                          <Play className="w-4 h-4 text-[#2f6fdb] shrink-0" />{" "}
                           <span className="truncate">
                             {selectedBatchItem.name}
                           </span>
@@ -3458,7 +4028,7 @@ export default function SyntheticVideoDetector() {
 
                     <div className="lg:col-span-5 space-y-6">
                       <div
-                        className={`${theme.bgCard} border ${theme.border} p-6 h-full`}
+                        className={`tech-panel ${theme.bgCard} border ${theme.border} p-6 h-full`}
                       >
                         <h2
                           className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider mb-6 flex items-center gap-2`}
@@ -3546,7 +4116,7 @@ export default function SyntheticVideoDetector() {
                   !activeBatchEntry.error &&
                   (activeBatchEntry.scores?.length ?? 0) > 0 && (
                     <div
-                      className={`${theme.bgCard} border ${theme.border} p-6`}
+                      className={`tech-panel ${theme.bgCard} border ${theme.border} p-6`}
                     >
                       <p className={`text-sm ${theme.textSub} mb-4`}>
                         Play the video to view real-time data below.

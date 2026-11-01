@@ -65,9 +65,9 @@ function NeuralBackground({ isDarkMode }: { isDarkMode: boolean }) {
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const rand = mulberry32(20260614);
-    const lineRGB = isDarkMode ? "47,111,219" : "37,99,235";
-    const nodeRGB = isDarkMode ? "148,163,184" : "71,85,105";
-    const pulseRGB = isDarkMode ? "96,165,250" : "47,111,219";
+    const lineRGB = isDarkMode ? "38,139,210" : "147,161,161";
+    const nodeRGB = isDarkMode ? "131,148,150" : "101,123,131";
+    const pulseRGB = isDarkMode ? "42,161,152" : "38,139,210";
     const LINK = 150;
 
     type Node = { x: number; y: number; vx: number; vy: number; r: number };
@@ -1017,22 +1017,22 @@ const INTEGRITY_CSS = `
   .integrity-ui h1 { letter-spacing: -0.025em; line-height: 1.08; }
   .integrity-ui h2 { letter-spacing: 0.08em; }
 
-  /* Chuyển động mượt, sắc nét theo phong cách kiến trúc kỹ thuật */
+  /* Chuyển động mượt cho mọi thành phần tương tác */
   .integrity-ui :where(div, button, a, span, label, input, select, textarea, p, tr, td, th) {
-    transition-property: color, background-color, border-color, opacity, transform, filter;
-    transition-duration: 0.2s;
-    transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+    transition-property: color, background-color, border-color, opacity, transform, box-shadow, filter;
+    transition-duration: 0.22s;
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
   }
 
-  /* Kiến trúc phẳng chuẩn kỹ thuật: góc vuông sắc cạnh (0-2px), không bo tròn kiểu vibecode, không đổ bóng lố */
-  .integrity-ui :where(button, input, select, textarea, label) { border-radius: 1px; }
-  .integrity-ui div[class*="border"] { border-radius: 1px; }
+  /* Phẳng: bo góc tối thiểu (1-2px), không bóng lố, không gradient kiểu vibecode */
+  .integrity-ui :where(button, input, select, textarea, label) { border-radius: 2px; }
+  .integrity-ui div[class*="border"] { border-radius: 2px; }
   .integrity-ui .app-header,
   .integrity-ui .app-header div[class*="border"] { border-radius: 0; }
   .integrity-ui button[class*="border-b"] { border-radius: 0; }
-  .integrity-ui video { border-radius: 1px; }
+  .integrity-ui video { border-radius: 2px; }
 
-  /* Đường viền góc kỹ thuật (Corner Ticks) tạo điểm nhấn thiết kế mà không dùng shadow hay bo góc */
+  /* Đường viền góc kỹ thuật (Corner Ticks) giữ thiết kế kiến trúc sắc nét */
   .tech-panel {
     position: relative;
   }
@@ -1048,17 +1048,17 @@ const INTEGRITY_CSS = `
   .tech-panel::before {
     top: -1px;
     left: -1px;
-    border-top: 2px solid #2f6fdb;
-    border-left: 2px solid #2f6fdb;
+    border-top: 2px solid #268bd2;
+    border-left: 2px solid #268bd2;
   }
   .tech-panel::after {
     bottom: -1px;
     right: -1px;
-    border-bottom: 2px solid #2f6fdb;
-    border-right: 2px solid #2f6fdb;
+    border-bottom: 2px solid #2aa198;
+    border-right: 2px solid #2aa198;
   }
 
-  /* Thanh trượt Ngưỡng phân loại (Threshold) đồng bộ tông Xanh - Trắng */
+  /* Thanh trượt Ngưỡng phân loại (Threshold) giữ thiết kế kiến trúc hiện tại với tông màu #2aa198 của file gốc */
   .threshold-slider {
     -webkit-appearance: none;
     appearance: none;
@@ -1067,14 +1067,14 @@ const INTEGRITY_CSS = `
     border-radius: 0;
     background: linear-gradient(
       90deg,
-      #1d4ed8 0%,
-      #2f6fdb var(--thresh-pct, 50%),
-      rgba(148, 163, 184, 0.28) var(--thresh-pct, 50%),
-      rgba(148, 163, 184, 0.28) 100%
+      #1f7a73 0%,
+      #2aa198 var(--thresh-pct, 50%),
+      rgba(139, 151, 167, 0.25) var(--thresh-pct, 50%),
+      rgba(139, 151, 167, 0.25) 100%
     );
     outline: none;
     cursor: pointer;
-    border: 1px solid rgba(47, 111, 219, 0.35);
+    border: 1px solid rgba(42, 161, 152, 0.4);
   }
   .threshold-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
@@ -1082,593 +1082,44 @@ const INTEGRITY_CSS = `
     width: 14px;
     height: 20px;
     border-radius: 1px;
-    background: #ffffff;
-    border: 2px solid #2f6fdb;
+    background: #fdf6e3;
+    border: 2px solid #2aa198;
     cursor: pointer;
-    transition: transform 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+    transition: transform 0.15s ease, background-color 0.15s ease;
   }
   .threshold-slider::-webkit-slider-thumb:hover {
-    background: #eff6ff;
-    border-color: #1d4ed8;
+    background: #ffffff;
     transform: scaleY(1.12);
   }
   .threshold-slider::-moz-range-thumb {
     width: 14px;
     height: 20px;
     border-radius: 1px;
-    background: #ffffff;
-    border: 2px solid #2f6fdb;
+    background: #fdf6e3;
+    border: 2px solid #2aa198;
     cursor: pointer;
   }
 
-  /* Phản hồi tương tác tinh tế */
-  .integrity-ui button:not(:disabled):hover { filter: brightness(1.06); }
-  .integrity-ui button:not(:disabled):active { transform: translateY(1px); }
-  .integrity-ui :focus-visible { outline: 2px solid #2f6fdb; outline-offset: 2px; }
-
-  /* ── Tổ hợp khối kính 3D chữ "VARUNA" tự xoay kèm khung dây 4 nút ── */
-  .v3d-scene {
-    position: relative;
-    width: 100%;
-    height: 100%;
-    perspective: 1150px;
-    user-select: none;
-  }
-  .v3d-float {
-    position: absolute;
-    inset: 0;
-    transform-style: preserve-3d;
-    animation: v3d-orbit-main 9.5s ease-in-out infinite alternate;
-  }
-  .v3d-stage {
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    width: 0;
-    height: 0;
-    transform-style: preserve-3d;
-    animation: v3d-bob-main 5.2s ease-in-out infinite alternate;
-  }
-  .v3d-word-group {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 0;
-    height: 0;
-    transform-style: preserve-3d;
-    animation: v3d-word-spin 11s ease-in-out infinite alternate;
-  }
-  .v3d-letter-unit {
-    position: absolute;
-    transform-style: preserve-3d;
-    animation: v3d-letter-wave 4.2s ease-in-out infinite alternate;
-  }
-  .v3d-wireframe-layer {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 0;
-    height: 0;
-    transform-style: preserve-3d;
-    animation: v3d-wire-float 7.5s ease-in-out infinite alternate;
-  }
-  .v3d-face {
-    position: absolute;
-    box-sizing: border-box;
-    overflow: visible;
-    backface-visibility: visible;
-  }
-  .v3d-glass-side {
-    background: linear-gradient(
-      135deg,
-      rgba(224, 252, 255, 0.78) 0%,
-      rgba(34, 211, 238, 0.56) 50%,
-      rgba(14, 116, 235, 0.65) 100%
-    );
-    border: 1px solid rgba(255, 255, 255, 0.85);
-    box-shadow: inset 0 0 10px rgba(165, 248, 255, 0.45);
-  }
-  .v3d-glass-cap {
-    background: linear-gradient(
-      90deg,
-      rgba(255, 255, 255, 0.88) 0%,
-      rgba(103, 232, 249, 0.68) 50%,
-      rgba(255, 255, 255, 0.88) 100%
-    );
-    border: 1px solid #ffffff;
-  }
-  .v3d-node-label {
-    animation: v3d-counter-sway 9.5s ease-in-out infinite alternate;
-    transform-style: preserve-3d;
-  }
-
-  @keyframes v3d-orbit-main {
-    0%   { transform: rotateX(-14deg) rotateY(-26deg) rotateZ(-1.5deg); }
-    50%  { transform: rotateX(-5deg)  rotateY(0deg)    rotateZ(0deg); }
-    100% { transform: rotateX(-12deg) rotateY(26deg)  rotateZ(1.5deg); }
-  }
-  @keyframes v3d-word-spin {
-    0%   { transform: translateZ(8px) rotateY(-10deg) rotateX(4deg); }
-    50%  { transform: translateZ(20px) rotateY(2deg)  rotateX(-3deg); }
-    100% { transform: translateZ(10px) rotateY(12deg) rotateX(3deg); }
-  }
-  @keyframes v3d-letter-wave {
-    0%   { transform: translate3d(var(--lx, 0px), calc(var(--ly, 0px) - 6px), calc(var(--lz, 0px) - 8px)) rotateY(-6deg) rotateX(4deg); }
-    100% { transform: translate3d(var(--lx, 0px), calc(var(--ly, 0px) + 6px), calc(var(--lz, 0px) + 12px)) rotateY(6deg) rotateX(-4deg); }
-  }
-  @keyframes v3d-counter-sway {
-    0%   { transform: rotateY(18deg) rotateX(8deg); }
-    50%  { transform: rotateY(0deg)  rotateX(3deg); }
-    100% { transform: rotateY(-18deg) rotateX(7deg); }
-  }
-  @keyframes v3d-bob-main {
-    0%   { transform: translateY(-6px); }
-    100% { transform: translateY(6px); }
-  }
-  @keyframes v3d-wire-float {
-    0%   { transform: translateZ(0px) rotateZ(-0.8deg); }
-    100% { transform: translateZ(10px) rotateZ(1deg); }
-  }
+  /* Phản hồi khi di chuột / bấm */
+  .integrity-ui [class*="cursor-pointer"]:hover { transform: translateY(-1px); }
+  .integrity-ui button:not(:disabled):hover { filter: brightness(1.07); }
+  .integrity-ui button:not(:disabled):active { transform: scale(0.98); }
+  .integrity-ui :focus-visible { outline: 2px solid #268bd2; outline-offset: 2px; }
 
   @keyframes fade-in-up {
-    from { opacity: 0; transform: translateY(10px); }
+    from { opacity: 0; transform: translateY(12px); }
     to { opacity: 1; transform: none; }
   }
-  .fade-in-up { animation: fade-in-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .fade-in-up { animation: fade-in-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
 
   @media (prefers-reduced-motion: reduce) {
     html { scroll-behavior: auto; }
     .fade-in-up { animation: none; }
-    .v3d-float, .v3d-stage, .v3d-word-group, .v3d-letter-unit, .v3d-wireframe-layer, .v3d-node-label {
-      animation: none !important;
-    }
-    .v3d-float { transform: rotateX(-10deg) rotateY(-16deg); }
     .integrity-ui :where(div, button, a, span, label, input, select, textarea, p, tr, td, th) {
       transition-duration: 0.01ms;
     }
   }
 `;
-
-
-// ── Dữ liệu hình học 3D cho từng chữ cái trong "VARUNA" (viewBox 68 x 104) ──
-type LetterSpec = {
-  char: string;
-  outerPath: string;
-  innerBevelPath: string;
-  crossbarPoly?: string;
-  holePoly?: string;
-  topCaps: { x: number; y: number; w: number }[];
-  leftSideY?: { x: number; y1: number; y2: number };
-  rightSideY?: { x: number; y1: number; y2: number };
-};
-
-const VARUNA_LETTERS: LetterSpec[] = [
-  {
-    char: "V",
-    outerPath: "M 4 6 L 23 6 L 34 66 L 45 6 L 64 6 L 44 98 L 24 98 Z",
-    innerBevelPath: "M 9 11 L 20 11 L 34 78 L 48 11 L 59 11 L 41 93 L 27 93 Z",
-    topCaps: [
-      { x: 4, y: 6, w: 19 },
-      { x: 45, y: 6, w: 19 },
-    ],
-  },
-  {
-    char: "A",
-    outerPath:
-      "M 22 6 L 46 6 L 64 98 L 46 98 L 41 72 L 27 72 L 22 98 L 4 98 Z M 34 25 L 28 56 L 40 56 Z",
-    innerBevelPath:
-      "M 25 11 L 43 11 L 58 93 L 49 93 L 43 67 L 25 67 L 19 93 L 10 93 Z",
-    crossbarPoly: "23,56 45,56 42,72 26,72",
-    holePoly: "34,25 28,56 40,56",
-    topCaps: [{ x: 22, y: 6, w: 24 }],
-  },
-  {
-    char: "R",
-    outerPath:
-      "M 6 6 L 44 6 L 58 17 L 58 45 L 45 55 L 62 98 L 43 98 L 28 58 L 23 58 L 23 98 L 6 98 Z M 23 21 L 23 43 L 40 43 L 43 39 L 43 25 L 40 21 Z",
-    innerBevelPath:
-      "M 11 11 L 42 11 L 53 20 L 53 42 L 40 52 L 55 93 L 46 93 L 30 54 L 18 54 L 18 93 L 11 93 Z",
-    holePoly: "23,21 23,43 40,43 43,39 43,25 40,21",
-    topCaps: [{ x: 6, y: 6, w: 38 }],
-    leftSideY: { x: 6, y1: 6, y2: 98 },
-  },
-  {
-    char: "U",
-    outerPath:
-      "M 6 6 L 24 6 L 24 75 L 29 82 L 39 82 L 44 75 L 44 6 L 62 6 L 62 80 L 48 98 L 20 98 L 6 80 Z",
-    innerBevelPath:
-      "M 11 11 L 19 11 L 19 77 L 27 87 L 41 87 L 49 77 L 49 11 L 57 11 L 57 78 L 45 93 L 23 93 L 11 78 Z",
-    topCaps: [
-      { x: 6, y: 6, w: 18 },
-      { x: 44, y: 6, w: 18 },
-    ],
-    leftSideY: { x: 6, y1: 6, y2: 80 },
-    rightSideY: { x: 62, y1: 6, y2: 80 },
-  },
-  {
-    char: "N",
-    outerPath:
-      "M 6 6 L 23 6 L 45 62 L 45 6 L 62 6 L 62 98 L 45 98 L 23 42 L 23 98 L 6 98 Z",
-    innerBevelPath:
-      "M 11 11 L 20 11 L 48 76 L 48 11 L 57 11 L 57 93 L 48 93 L 20 28 L 20 93 L 11 93 Z",
-    topCaps: [
-      { x: 6, y: 6, w: 17 },
-      { x: 45, y: 6, w: 17 },
-    ],
-    leftSideY: { x: 6, y1: 6, y2: 98 },
-    rightSideY: { x: 62, y1: 6, y2: 98 },
-  },
-  {
-    char: "A",
-    outerPath:
-      "M 22 6 L 46 6 L 64 98 L 46 98 L 41 72 L 27 72 L 22 98 L 4 98 Z M 34 25 L 28 56 L 40 56 Z",
-    innerBevelPath:
-      "M 25 11 L 43 11 L 58 93 L 49 93 L 43 67 L 25 67 L 19 93 L 10 93 Z",
-    crossbarPoly: "23,56 45,56 42,72 26,72",
-    holePoly: "34,25 28,56 40,56",
-    topCaps: [{ x: 22, y: 6, w: 24 }],
-  },
-];
-
-// ── Khối kính 3D chữ "VARUNA" tự chuyển động kèm khung dây 4 điểm nút ──
-function Glass3D() {
-  const LW = 64;
-  const LH = 104;
-  const LD = 36; // Độ dày khối kính 3D của mỗi chữ cái
-  const halfLD = LD / 2;
-  const GAP = 6;
-  const totalW = VARUNA_LETTERS.length * LW + (VARUNA_LETTERS.length - 1) * GAP; // 414px
-
-  // Các lớp cắt chiều sâu Z giúp khối chữ 3D đặc, trong suốt và khúc xạ ánh sáng ở mọi góc xoay
-  const depthSlices = [-15, -12, -9, -6, -3, 0, 3, 6, 9, 12, 15];
-
-  // Tọa độ 4 nút vuông trắng (■) trong mặt phẳng khung dây 540x320 (tâm tại 270, 160)
-  const pTL = { x: 74, y: 58 };
-  const pTR = { x: 452, y: 42 };
-  const pBL = { x: 88, y: 274 };
-  const pBR = { x: 398, y: 278 };
-
-  return (
-    <div className="v3d-scene" aria-hidden>
-      {/* Mảng hình học chữ Π trắng bên trái tạo điểm nhấn thị giác theo mẫu */}
-      <div className="absolute left-0 top-[34%] w-[76px] h-[116px] pointer-events-none opacity-95 hidden sm:block">
-        <div className="absolute top-0 left-0 right-0 h-[18px] bg-white" />
-        <div className="absolute top-0 right-0 bottom-0 w-[18px] bg-white" />
-        <div className="absolute top-0 left-0 bottom-0 w-[15px] bg-white" />
-      </div>
-
-      <div className="v3d-float">
-        <div className="v3d-stage">
-          {/* ── CẠNH KHUNG DÂY TRẮNG PHÍA SAU ĐI XUYÊN QUA PHÍA SAU CHỮ VARUNA ── */}
-          <div className="v3d-wireframe-layer" style={{ transform: "translateZ(-36px)" }}>
-            <svg
-              className="v3d-face pointer-events-none"
-              style={{ width: 540, height: 320, left: -270, top: -160 }}
-              viewBox="0 0 540 320"
-            >
-              <line
-                x1={pTL.x}
-                y1={pTL.y}
-                x2={pTR.x}
-                y2={pTR.y}
-                stroke="#ffffff"
-                strokeWidth="1.6"
-                strokeOpacity="0.92"
-              />
-            </svg>
-          </div>
-
-          {/* ── CỤM 6 KHỐI CHỮ KÍNH 3D "V · A · R · U · N · A" TỰ XOAY & LƯỢN SÓNG 3D ── */}
-          <div className="v3d-word-group">
-            {VARUNA_LETTERS.map((item, idx) => {
-              const xPos = -totalW / 2 + idx * (LW + GAP);
-              // Tạo độ cong vòm 3D nhẹ giữa các chữ cái để nhìn rõ các mặt vát 3D
-              const archZ = Math.round(Math.sin((idx / 5) * Math.PI) * 14);
-              const archY = -LH / 2 - Math.round(Math.sin((idx / 5) * Math.PI) * 6);
-              const gradId = `varuna_g_${idx}`;
-              const bevelId = `varuna_b_${idx}`;
-
-              return (
-                <div
-                  key={idx}
-                  className="v3d-letter-unit"
-                  style={
-                    {
-                      width: LW,
-                      height: LH,
-                      "--lx": `${xPos}px`,
-                      "--ly": `${archY}px`,
-                      "--lz": `${archZ}px`,
-                      animationDelay: `${idx * -0.45}s`,
-                    } as React.CSSProperties
-                  }
-                >
-                  {/* Mặt sau của chữ cái (z = -halfLD) */}
-                  <svg
-                    className="v3d-face"
-                    style={{
-                      left: 0,
-                      top: 0,
-                      width: LW,
-                      height: LH,
-                      transform: `translateZ(${-halfLD}px)`,
-                    }}
-                    viewBox="0 0 68 104"
-                  >
-                    <path
-                      d={item.outerPath}
-                      fillRule="evenodd"
-                      fill="rgba(14, 116, 235, 0.52)"
-                      stroke="rgba(165, 248, 255, 0.68)"
-                      strokeWidth="2"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-
-                  {/* Các lớp kính 3D xếp đặc theo trục Z tạo thành vách thủy tinh cyan liền khối */}
-                  {depthSlices.map((zVal, sIdx) => (
-                    <svg
-                      key={sIdx}
-                      className="v3d-face"
-                      style={{
-                        left: 0,
-                        top: 0,
-                        width: LW,
-                        height: LH,
-                        transform: `translateZ(${zVal}px)`,
-                      }}
-                      viewBox="0 0 68 104"
-                    >
-                      <path
-                        d={item.outerPath}
-                        fillRule="evenodd"
-                        fill={
-                          sIdx % 3 === 0
-                            ? "rgba(34, 211, 238, 0.16)"
-                            : "rgba(14, 165, 233, 0.1)"
-                        }
-                        stroke={
-                          sIdx === Math.floor(depthSlices.length / 2)
-                            ? "rgba(255, 255, 255, 0.85)"
-                            : "rgba(103, 232, 249, 0.55)"
-                        }
-                        strokeWidth={
-                          sIdx === Math.floor(depthSlices.length / 2) ? "2.2" : "1.6"
-                        }
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  ))}
-
-                  {/* Nắp kính 3D trên đỉnh mỗi chữ cái */}
-                  {item.topCaps.map((cap, cIdx) => (
-                    <div
-                      key={cIdx}
-                      className="v3d-face v3d-glass-cap"
-                      style={{
-                        width: (cap.w / 68) * LW,
-                        height: LD,
-                        left: (cap.x / 68) * LW,
-                        top: (cap.y / 104) * LH - LD / 2,
-                        transform: "rotateX(90deg)",
-                      }}
-                    />
-                  ))}
-
-                  {/* Vách kính 3D phẳng bên trái (nếu có cạnh thẳng) */}
-                  {item.leftSideY && (
-                    <div
-                      className="v3d-face v3d-glass-side"
-                      style={{
-                        width: LD,
-                        height: ((item.leftSideY.y2 - item.leftSideY.y1) / 104) * LH,
-                        left: (item.leftSideY.x / 68) * LW - LD / 2,
-                        top: (item.leftSideY.y1 / 104) * LH,
-                        transform: "rotateY(-90deg)",
-                      }}
-                    />
-                  )}
-
-                  {/* Vách kính 3D phẳng bên phải (nếu có cạnh thẳng) */}
-                  {item.rightSideY && (
-                    <div
-                      className="v3d-face v3d-glass-side"
-                      style={{
-                        width: LD,
-                        height: ((item.rightSideY.y2 - item.rightSideY.y1) / 104) * LH,
-                        left: (item.rightSideY.x / 68) * LW - LD / 2,
-                        top: (item.rightSideY.y1 / 104) * LH,
-                        transform: "rotateY(90deg)",
-                      }}
-                    />
-                  )}
-
-                  {/* Mặt chính diện của chữ cái (z = +halfLD) với hiệu ứng vát cạnh thủy tinh cyan sắc nét */}
-                  <svg
-                    className="v3d-face"
-                    style={{
-                      left: 0,
-                      top: 0,
-                      width: LW,
-                      height: LH,
-                      transform: `translateZ(${halfLD}px)`,
-                    }}
-                    viewBox="0 0 68 104"
-                  >
-                    <defs>
-                      <linearGradient id={gradId} x1="0.1" y1="0" x2="0.9" y2="1">
-                        <stop offset="0%" stopColor="#e0fcff" stopOpacity="0.88" />
-                        <stop offset="38%" stopColor="#22d3ee" stopOpacity="0.72" />
-                        <stop offset="78%" stopColor="#0284c7" stopOpacity="0.76" />
-                        <stop offset="100%" stopColor="#1e3a8a" stopOpacity="0.84" />
-                      </linearGradient>
-                      <linearGradient id={bevelId} x1="0" y1="0" x2="1" y2="1">
-                        <stop offset="0%" stopColor="#ffffff" stopOpacity="0.98" />
-                        <stop offset="50%" stopColor="#67e8f9" stopOpacity="0.82" />
-                        <stop offset="100%" stopColor="#ffffff" stopOpacity="0.92" />
-                      </linearGradient>
-                    </defs>
-
-                    {/* Thân chính của chữ cái */}
-                    <path
-                      d={item.outerPath}
-                      fillRule="evenodd"
-                      fill={`url(#${gradId})`}
-                      stroke={`url(#${bevelId})`}
-                      strokeWidth="2.8"
-                      strokeLinejoin="round"
-                    />
-
-                    {/* Đường vát cạnh khúc xạ bên trong từng chữ cái */}
-                    <path
-                      d={item.innerBevelPath}
-                      fill="rgba(255, 255, 255, 0.14)"
-                      stroke="rgba(224, 252, 255, 0.82)"
-                      strokeWidth="1.2"
-                      strokeLinejoin="round"
-                    />
-
-                    {/* Thanh ngang nổi bật cho hai chữ A */}
-                    {item.crossbarPoly && (
-                      <polygon
-                        points={item.crossbarPoly}
-                        fill="rgba(224, 252, 255, 0.82)"
-                        stroke="#ffffff"
-                        strokeWidth="1.5"
-                      />
-                    )}
-
-                    {/* Khoang rỗng tương phản cao cho chữ A và R */}
-                    {item.holePoly && (
-                      <polygon
-                        points={item.holePoly}
-                        fill="rgba(15, 35, 145, 0.55)"
-                        stroke="#ffffff"
-                        strokeWidth="1.4"
-                      />
-                    )}
-                  </svg>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* ── LỚP KHUNG DÂY TRẮNG & 4 NÚT VUÔNG (■) BAO QUANH CHỮ VARUNA ── */}
-          <div className="v3d-wireframe-layer" style={{ transform: "translateZ(46px)" }}>
-            <svg
-              className="v3d-face pointer-events-none"
-              style={{ width: 540, height: 320, left: -270, top: -160 }}
-              viewBox="0 0 540 320"
-            >
-              <line
-                x1={pTL.x}
-                y1={pTL.y}
-                x2={pBL.x}
-                y2={pBL.y}
-                stroke="#ffffff"
-                strokeWidth="1.6"
-                strokeOpacity="0.95"
-              />
-              <line
-                x1={pBL.x}
-                y1={pBL.y}
-                x2={pBR.x}
-                y2={pBR.y}
-                stroke="#ffffff"
-                strokeWidth="1.6"
-                strokeOpacity="0.95"
-              />
-              <line
-                x1={pBR.x}
-                y1={pBR.y}
-                x2={pTR.x}
-                y2={pTR.y}
-                stroke="#ffffff"
-                strokeWidth="1.6"
-                strokeOpacity="0.95"
-              />
-
-              {[pTL, pTR, pBL, pBR].map((pt, idx) => (
-                <rect
-                  key={idx}
-                  x={pt.x - 5.5}
-                  y={pt.y - 5.5}
-                  width="11"
-                  height="11"
-                  fill="#ffffff"
-                />
-              ))}
-            </svg>
-
-            {/* Nhãn 1 (Trên - Trái): Hiệu quả */}
-            <div
-              className="v3d-face v3d-node-label pointer-events-none"
-              style={{
-                left: -270 + pTL.x - 12,
-                top: -160 + pTL.y - 10,
-              }}
-            >
-              <div className="-translate-x-full text-right pr-2">
-                <span className="text-xs sm:text-[13px] font-semibold text-white tracking-wide whitespace-nowrap">
-                  {t("Hiệu quả", "Efficient")}
-                </span>
-              </div>
-            </div>
-
-            {/* Nhãn 2 (Trên - Phải): Kiểm chứng thông tin */}
-            <div
-              className="v3d-face v3d-node-label pointer-events-none"
-              style={{
-                left: -270 + pTR.x + 12,
-                top: -160 + pTR.y - 14,
-              }}
-            >
-              <div className="text-left pl-1 leading-tight">
-                <span className="text-xs sm:text-[13px] font-semibold text-white tracking-wide block whitespace-nowrap">
-                  {t("Kiểm chứng", "Information")}
-                </span>
-                <span className="text-xs sm:text-[13px] font-semibold text-white/90 tracking-wide block whitespace-nowrap">
-                  {t("thông tin", "verification")}
-                </span>
-              </div>
-            </div>
-
-            {/* Nhãn 3 (Dưới - Trái): Nhanh chóng */}
-            <div
-              className="v3d-face v3d-node-label pointer-events-none"
-              style={{
-                left: -270 + pBL.x - 12,
-                top: -160 + pBL.y - 10,
-              }}
-            >
-              <div className="-translate-x-full text-right pr-2 leading-tight">
-                <span className="text-xs sm:text-[13px] font-semibold text-white tracking-wide block whitespace-nowrap">
-                  {t("Nhanh chóng", "Fast & instant")}
-                </span>
-              </div>
-            </div>
-
-            {/* Nhãn 4 (Dưới - Phải): Tiện ích */}
-            <div
-              className="v3d-face v3d-node-label pointer-events-none"
-              style={{
-                left: -270 + pBR.x + 12,
-                top: -160 + pBR.y - 10,
-              }}
-            >
-              <div className="text-left pl-1 leading-tight">
-                <span className="text-xs sm:text-[13px] font-semibold text-white tracking-wide block whitespace-nowrap">
-                  {t("Tiện ích", "Practical utility")}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 
 function ResultSummary({
   result,
@@ -1689,14 +1140,14 @@ function ResultSummary({
       <div
         className={`p-4 border flex items-center gap-4 ${
           classified.isSynthetic
-            ? `${theme.bgMain} border-[#d6504c]/50 text-[#d6504c]`
-            : `${theme.bgMain} border-[#3d9a6e]/50 text-[#3d9a6e]`
+            ? `${theme.bgMain} border-[#dc322f]/50 text-[#dc322f]`
+            : `${theme.bgMain} border-[#2aa198]/50 text-[#2aa198]`
         }`}
       >
         {classified.isSynthetic ? (
-          <ShieldAlert className="w-10 h-10 shrink-0 text-[#d6504c]" />
+          <ShieldAlert className="w-10 h-10 shrink-0 text-[#dc322f]" />
         ) : (
-          <ShieldCheck className="w-10 h-10 shrink-0 text-[#3d9a6e]" />
+          <ShieldCheck className="w-10 h-10 shrink-0 text-[#2aa198]" />
         )}
 
         <div>
@@ -1722,15 +1173,15 @@ function ResultSummary({
         </div>
 
         <div
-          className={`relative w-full ${theme.bgCard} h-3.5 overflow-hidden border ${theme.border}`}
+          className={`relative w-full ${theme.bgCard} h-3 overflow-hidden border ${theme.border}`}
         >
           <div
-            className={`${classified.isSynthetic ? "bg-[#d6504c]" : "bg-[#2f6fdb]"} h-full transition-all duration-700`}
+            className="bg-[#dc322f] h-full transition-all duration-1000"
             style={{ width: `${prob * 100}%` }}
           ></div>
 
           <div
-            className="absolute top-0 bottom-0 w-[2px] bg-[#2f6fdb] shadow-[0_0_0_1px_#ffffff]"
+            className="absolute top-0 bottom-0 w-0.5 bg-white/80"
             style={{ left: `${threshold * 100}%` }}
             title={`Threshold: ${(threshold * 100).toFixed(0)}%`}
           ></div>
@@ -1754,7 +1205,7 @@ function ResultSummary({
 
         <div className={`flex justify-between py-2 border-b ${theme.border}`}>
           <span className={`${theme.textMain} flex items-center gap-1.5`}>
-            <Clock className="w-3.5 h-3.5 text-[#2f6fdb]" />
+            <Clock className="w-3.5 h-3.5 text-[#268bd2]" />
             {t("Thời gian xử lý:", "Processing time:")}
           </span>
           <span className={`${theme.textHeading} tabular-nums font-semibold`}>
@@ -1804,40 +1255,41 @@ function ScoreChart({
       >
         <CartesianGrid
           strokeDasharray="3 3"
-          stroke={isDarkMode ? "#27313f" : "#e5e7eb"}
+          stroke={isDarkMode ? "#194b57" : "#d5ceb8"}
         />
         <XAxis
           dataKey="time"
           type="number"
           domain={["dataMin", "dataMax"]}
           tick={{
-            fill: isDarkMode ? "#8b97a7" : "#6b7280",
+            fill: isDarkMode ? "#839496" : "#657b83",
             fontSize: 12,
           }}
           label={{
             value: t("Thời gian (giây)", "Time (seconds)"),
             position: "bottom",
             offset: 0,
-            fill: isDarkMode ? "#8b97a7" : "#6b7280",
+            fill: isDarkMode ? "#839496" : "#657b83",
           }}
         />
         <YAxis
           domain={[0, 1]}
           tick={{
-            fill: isDarkMode ? "#8b97a7" : "#6b7280",
+            fill: isDarkMode ? "#839496" : "#657b83",
             fontSize: 12,
           }}
           label={{
             value: t("Điểm AI", "Synthetic score"),
             angle: -90,
             position: "insideLeft",
-            fill: isDarkMode ? "#8b97a7" : "#6b7280",
+            fill: isDarkMode ? "#839496" : "#657b83",
           }}
         />
         <Tooltip
           contentStyle={{
-            backgroundColor: isDarkMode ? "#151b24" : "#ffffff",
-            border: `1px solid ${isDarkMode ? "#27313f" : "#e5e7eb"}`,
+            backgroundColor: isDarkMode ? "#073642" : "#eee8d5",
+            border: `1px solid ${isDarkMode ? "#194b57" : "#d5ceb8"}`,
+            color: isDarkMode ? "#fdf6e3" : "#073642",
             fontSize: 12,
           }}
           labelFormatter={(t) => `t = ${Number(t).toFixed(2)}s`}
@@ -1852,31 +1304,30 @@ function ScoreChart({
           type="monotone"
           dataKey="score"
           name="Synthetic score"
-          stroke="#2f6fdb"
-          strokeWidth={2.2}
+          stroke="#2aa198"
+          strokeWidth={2}
           dot={false}
           isAnimationActive={false}
         />
         <ReferenceLine
           y={threshold}
-          stroke={isDarkMode ? "#60a5fa" : "#1d4ed8"}
-          strokeWidth={1.5}
-          strokeDasharray="5 4"
+          stroke={isDarkMode ? "#839496" : "#657b83"}
+          strokeDasharray="4 4"
           label={{
-            value: `${t("Ngưỡng", "Threshold")} ${(threshold * 100).toFixed(0)}%`,
+            value: t("Ngưỡng", "Threshold"),
             position: "right",
-            fill: isDarkMode ? "#60a5fa" : "#1d4ed8",
+            fill: isDarkMode ? "#839496" : "#657b83",
             fontSize: 11,
           }}
         />
         <ReferenceLine
           x={currentTime}
-          stroke="#d6504c"
+          stroke="#dc322f"
           strokeWidth={2}
           label={{
             value: t("Thời điểm hiện tại", "Current time"),
             position: "top",
-            fill: "#d6504c",
+            fill: "#dc322f",
             fontSize: 11,
           }}
         />
@@ -1941,15 +1392,15 @@ function BatchGridCard({
 
   const missingResult = item.status === "done" && !classified;
 
-  let borderColor = "#27313f";
+  let borderColor = "#194b57";
 
-  if (item.status === "processing") borderColor = "#2f6fdb";
-  else if (item.status === "error") borderColor = "#d6504c";
+  if (item.status === "processing") borderColor = "#268bd2";
+  else if (item.status === "error") borderColor = "#dc322f";
   else if (item.status === "done") {
-    if (!classified) borderColor = "#6b7280";
-    else if (isCorrect === true) borderColor = "#3d9a6e";
-    else if (isCorrect === false) borderColor = "#d6504c";
-    else borderColor = predicted === 1 ? "#c48a1a" : "#2f6fdb";
+    if (!classified) borderColor = "#657b83";
+    else if (isCorrect === true) borderColor = "#2aa198";
+    else if (isCorrect === false) borderColor = "#dc322f";
+    else borderColor = predicted === 1 ? "#b58900" : "#268bd2";
   }
 
   return (
@@ -2004,7 +1455,7 @@ function BatchGridCard({
 
       {item.status === "error" && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-          <X className="w-6 h-6 text-[#d6504c]" />
+          <X className="w-6 h-6 text-[#dc322f]" />
         </div>
       )}
 
@@ -2012,7 +1463,7 @@ function BatchGridCard({
         <div className="absolute bottom-0 inset-x-0 px-2 py-1 bg-black/75 flex items-center justify-between">
           <span
             className={`text-[10px] font-bold ${
-              classified.isSynthetic ? "text-[#d6504c]" : "text-[#3d9a6e]"
+              classified.isSynthetic ? "text-[#dc322f]" : "text-[#2aa198]"
             }`}
           >
             {classified.isSynthetic ? "AI" : "Real"} ·{" "}
@@ -2029,16 +1480,16 @@ function BatchGridCard({
 
           {hasGroundTruth &&
             (isCorrect ? (
-              <Check className="w-3.5 h-3.5 text-[#3d9a6e]" />
+              <Check className="w-3.5 h-3.5 text-[#2aa198]" />
             ) : (
-              <X className="w-3.5 h-3.5 text-[#d6504c]" />
+              <X className="w-3.5 h-3.5 text-[#dc322f]" />
             ))}
         </div>
       )}
 
       {missingResult && (
         <div className="absolute bottom-0 inset-x-0 px-2 py-1 bg-black/75">
-          <span className="text-[10px] text-[#a7b1bf]">
+          <span className="text-[10px] text-[#93a1a1]">
             {t("Chưa có kết quả", "No result yet")}
           </span>
         </div>
@@ -2192,10 +1643,10 @@ function DashboardView({
   };
 
   const statusStyle: Record<BatchStatus, string> = {
-    queued: "text-[#a7b1bf] border-[#a7b1bf]/40",
-    processing: "text-[#2f6fdb] border-[#2f6fdb]/40",
-    done: "text-[#3d9a6e] border-[#3d9a6e]/40",
-    error: "text-[#d6504c] border-[#d6504c]/40",
+    queued: "text-[#93a1a1] border-[#93a1a1]/40",
+    processing: "text-[#268bd2] border-[#268bd2]/40",
+    done: "text-[#2aa198] border-[#2aa198]/40",
+    error: "text-[#dc322f] border-[#dc322f]/40",
   };
 
   return (
@@ -2208,15 +1659,15 @@ function DashboardView({
         className={`${theme.bgCard} border ${theme.border} p-4 mb-4 flex flex-wrap items-center gap-6`}
       >
         <div className="flex items-center gap-3 flex-1 min-w-[280px]">
-          <div className="w-8 h-8 bg-[#2f6fdb]/10 border border-[#2f6fdb]/40 flex items-center justify-center shrink-0">
-            <SlidersHorizontal className="w-4 h-4 text-[#2f6fdb]" />
+          <div className="w-8 h-8 bg-[#2aa198]/10 border border-[#2aa198]/40 flex items-center justify-center shrink-0">
+            <SlidersHorizontal className="w-4 h-4 text-[#2aa198]" />
           </div>
           <div className="flex-1">
             <div className="flex items-center justify-between text-xs mb-1.5">
               <span className={`${theme.textHeading} font-semibold flex items-center gap-2`}>
                 {t("Ngưỡng phân loại (threshold)", "Classification threshold")}
               </span>
-              <span className="font-mono-tech text-xs font-bold px-2 py-0.5 bg-[#2f6fdb] text-white border border-white/25">
+              <span className="font-mono-tech text-xs font-bold px-2 py-0.5 bg-[#2aa198] text-white border border-white/20">
                 {(threshold * 100).toFixed(0)}%
               </span>
             </div>
@@ -2256,11 +1707,11 @@ function DashboardView({
             type="checkbox"
             checked={mockMode}
             onChange={(e) => setMockMode(e.target.checked)}
-            className="accent-[#c48a1a]"
+            className="accent-[#b58900]"
           />
           <span
             className={`font-bold flex items-center gap-1 ${
-              mockMode ? "text-[#c48a1a]" : theme.textHeading
+              mockMode ? "text-[#b58900]" : theme.textHeading
             }`}
           >
             <FlaskConical className="w-3.5 h-3.5" /> {t("Chế độ test", "Test mode")}
@@ -2378,7 +1829,7 @@ function DashboardView({
         <button
           onClick={runAllBatch}
           disabled={isBatchRunning}
-          className="ml-auto text-xs font-bold px-4 py-2 border bg-[#2f6fdb] hover:brightness-110 text-white disabled:opacity-50 flex items-center gap-1.5"
+          className="ml-auto text-xs font-bold px-4 py-2 border bg-[#268bd2] hover:brightness-110 text-white disabled:opacity-50 flex items-center gap-1.5"
         >
           {isBatchRunning ? (
             <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -2404,7 +1855,7 @@ function DashboardView({
             onChange={(e) => setBatchUrlText(e.target.value)}
             placeholder={t("Dán link YouTube / TikTok / Facebook..., mỗi dòng 1 link", "Paste YouTube / TikTok / Facebook links, one per line")}
             rows={3}
-            className={`w-full px-3 py-2 border ${theme.border} ${theme.inputBg} ${theme.textHeading} text-xs outline-none focus:border-[#2f6fdb] mb-2`}
+            className={`w-full px-3 py-2 border ${theme.border} ${theme.inputBg} ${theme.textHeading} text-xs outline-none focus:border-[#2aa198] mb-2`}
           />
 
           <div className="flex justify-end gap-2">
@@ -2418,7 +1869,7 @@ function DashboardView({
             <button
               onClick={handleAddBatchUrls}
               disabled={!batchUrlText.trim()}
-              className="text-xs font-bold px-3 py-1.5 border bg-[#2f6fdb] hover:brightness-110 text-white disabled:opacity-50"
+              className="text-xs font-bold px-3 py-1.5 border bg-[#268bd2] hover:brightness-110 text-white disabled:opacity-50"
             >
               {t("Thêm vào danh sách", "Add to list")}
             </button>
@@ -2432,7 +1883,7 @@ function DashboardView({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder={t("Tìm tên hoặc URL video...", "Search by video name or URL...")}
-          className={`flex-1 min-w-[200px] text-xs px-3 py-2 border ${theme.border} ${theme.inputBg} ${theme.textHeading} outline-none focus:border-[#2f6fdb]`}
+          className={`flex-1 min-w-[200px] text-xs px-3 py-2 border ${theme.border} ${theme.inputBg} ${theme.textHeading} outline-none focus:border-[#2aa198]`}
         />
 
         <select
@@ -2546,9 +1997,9 @@ function DashboardView({
                             className="w-full h-full object-cover pointer-events-none"
                           />
                         ) : it.sourceUrl ? (
-                          <Link2 className="w-3.5 h-3.5 text-[#a7b1bf]" />
+                          <Link2 className="w-3.5 h-3.5 text-[#93a1a1]" />
                         ) : (
-                          <Film className="w-3.5 h-3.5 text-[#a7b1bf]" />
+                          <Film className="w-3.5 h-3.5 text-[#93a1a1]" />
                         )}
                       </div>
                       <span className="truncate">{it.name}</span>
@@ -2567,8 +2018,8 @@ function DashboardView({
                         <span
                           className={`font-bold ${
                             classified.isSynthetic
-                              ? "text-[#d6504c]"
-                              : "text-[#3d9a6e]"
+                              ? "text-[#dc322f]"
+                              : "text-[#2aa198]"
                           }`}
                         >
                           {classified.isSynthetic ? "AI" : "Real"}
@@ -2587,8 +2038,8 @@ function DashboardView({
                             <div
                               className={
                                 classified.isSynthetic
-                                  ? "bg-[#d6504c] h-full"
-                                  : "bg-[#3d9a6e] h-full"
+                                  ? "bg-[#dc322f] h-full"
+                                  : "bg-[#2aa198] h-full"
                               }
                               style={{
                                 width: `${classified.probability_ai * 100}%`,
@@ -2608,7 +2059,7 @@ function DashboardView({
                       <span
                         className={
                           isMismatch
-                            ? "text-[#d6504c] font-bold"
+                            ? "text-[#dc322f] font-bold"
                             : theme.textSub
                         }
                       >
@@ -2681,7 +2132,7 @@ function DashboardView({
                       href={selectedBatchItem.sourceUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="text-xs text-[#2f6fdb] hover:underline break-all"
+                      className="text-xs text-[#268bd2] hover:underline break-all"
                     >
                       {selectedBatchItem.sourceUrl}
                     </a>
@@ -2691,7 +2142,7 @@ function DashboardView({
             </div>
 
             {selectedBatchItem.status === "error" && (
-              <p className="text-xs text-[#d6504c] mb-4">
+              <p className="text-xs text-[#dc322f] mb-4">
                 {selectedBatchItem.error}
               </p>
             )}
@@ -2725,7 +2176,7 @@ function DashboardView({
             )}
 
             {activeBatchEntry?.error && (
-              <p className="text-xs text-[#d6504c] mt-2">
+              <p className="text-xs text-[#dc322f] mt-2">
                 {activeBatchEntry.error}
               </p>
             )}
@@ -2821,22 +2272,22 @@ export default function SyntheticVideoDetector() {
   }, [selectedBatchId]);
 
   const theme: Theme = {
-    bgMain: isDarkMode ? "bg-[#0e131a]" : "bg-[#f7f8fa]",
-    bgCard: isDarkMode ? "bg-[#151b24]" : "bg-[#ffffff]",
-    textMain: isDarkMode ? "text-[#a7b1bf]" : "text-[#4b5563]",
-    textHeading: isDarkMode ? "text-[#e8ecf2]" : "text-[#111827]",
-    textSub: isDarkMode ? "text-[#8b97a7]" : "text-[#6b7280]",
-    border: isDarkMode ? "border-[#27313f]" : "border-[#e5e7eb]",
-    inputBg: isDarkMode ? "bg-[#0a0e14]/60" : "bg-[#f3f4f6]",
+    bgMain: isDarkMode ? "bg-[#002b36]" : "bg-[#fdf6e3]",
+    bgCard: isDarkMode ? "bg-[#073642]" : "bg-[#eee8d5]",
+    textMain: isDarkMode ? "text-[#93a1a1]" : "text-[#586e75]",
+    textHeading: isDarkMode ? "text-[#fdf6e3]" : "text-[#073642]",
+    textSub: isDarkMode ? "text-[#839496]" : "text-[#657b83]",
+    border: isDarkMode ? "border-[#194b57]" : "border-[#d5ceb8]",
+    inputBg: isDarkMode ? "bg-[#00212b]/80" : "bg-[#fdf6e3]",
     btnCancel: isDarkMode
-      ? "bg-[#0a0e14] hover:bg-[#27313f] text-[#a7b1bf]"
-      : "bg-[#f3f4f6] hover:bg-[#e5e7eb] text-[#4b5563]",
+      ? "bg-[#00212b] hover:bg-[#194b57] text-[#93a1a1]"
+      : "bg-[#fdf6e3] hover:bg-[#e2dbc7] text-[#586e75]",
   };
 
   const tabBtn = (isActive: boolean) =>
     `flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-all ${
       isActive
-        ? `border-[#2f6fdb] ${theme.textHeading} font-bold`
+        ? `border-[#268bd2] ${theme.textHeading} font-bold`
         : `border-transparent ${theme.textSub} hover:opacity-80`
     }`;
 
@@ -3097,7 +2548,7 @@ export default function SyntheticVideoDetector() {
       >
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <span className="w-2.5 h-2.5 bg-[#2f6fdb]" aria-hidden />
+            <span className="w-2.5 h-2.5 bg-[#268bd2]" aria-hidden />
             <span
               className={`${theme.textHeading} font-extrabold text-xl tracking-[0.18em]`}
             >
@@ -3113,7 +2564,7 @@ export default function SyntheticVideoDetector() {
                 onClick={() => setAppMode("classic")}
                 className={`px-3 py-1 transition-colors ${
                   appMode === "classic"
-                    ? "bg-[#2f6fdb] text-white font-bold"
+                    ? "bg-[#268bd2] text-white font-bold"
                     : `${theme.textSub} hover:opacity-80`
                 }`}
               >
@@ -3124,7 +2575,7 @@ export default function SyntheticVideoDetector() {
                 onClick={() => setAppMode("dashboard")}
                 className={`px-3 py-1 transition-colors flex items-center gap-1.5 ${
                   appMode === "dashboard"
-                    ? "bg-[#2f6fdb] text-white font-bold"
+                    ? "bg-[#268bd2] text-white font-bold"
                     : `${theme.textSub} hover:opacity-80`
                 }`}
               >
@@ -3133,15 +2584,15 @@ export default function SyntheticVideoDetector() {
             </div>
 
             {mockMode ? (
-              <span className="flex items-center gap-1.5 text-[#c48a1a] bg-[#c48a1a]/10 px-3 py-1 border border-[#c48a1a]/50">
+              <span className="flex items-center gap-1.5 text-[#b58900] bg-[#b58900]/10 px-3 py-1 border border-[#b58900]/50">
                 <FlaskConical className="w-3.5 h-3.5" />
                 {t("Chế độ test (dữ liệu giả)", "Test mode (mock data)")}
               </span>
             ) : (
               <span
-                className={`flex items-center gap-1.5 text-[#3d9a6e] ${theme.bgMain} px-3 py-1 border ${theme.border}`}
+                className={`flex items-center gap-1.5 text-[#2aa198] ${theme.bgMain} px-3 py-1 border ${theme.border}`}
               >
-                <span className="w-2 h-2 bg-[#3d9a6e] animate-pulse"></span>
+                <span className="w-2 h-2 bg-[#2aa198] animate-pulse"></span>
                 {t("Đã kết nối", "Connected")}
               </span>
             )}
@@ -3159,7 +2610,7 @@ export default function SyntheticVideoDetector() {
                   aria-pressed={lang === l}
                   className={`px-2.5 py-1 font-semibold uppercase transition-colors ${
                     lang === l
-                      ? "bg-[#2f6fdb] text-white"
+                      ? "bg-[#268bd2] text-white"
                       : `${theme.textSub} hover:opacity-80`
                   }`}
                 >
@@ -3174,9 +2625,9 @@ export default function SyntheticVideoDetector() {
               className={`p-2 ${theme.bgMain} border ${theme.border} hover:opacity-80 transition-all`}
             >
               {isDarkMode ? (
-                <Sun className="w-4 h-4 text-[#c48a1a]" />
+                <Sun className="w-4 h-4 text-[#b58900]" />
               ) : (
-                <Moon className="w-4 h-4 text-[#6b7280]" />
+                <Moon className="w-4 h-4 text-[#657b83]" />
               )}
             </button>
           </div>
@@ -3185,7 +2636,7 @@ export default function SyntheticVideoDetector() {
 
       <main key={appMode} className="relative z-10 max-w-7xl mx-auto px-6 py-10 fade-in-up">
         {noticeMessage && (
-          <div className="mb-6 p-4 border border-[#d6504c] bg-[#d6504c]/10 text-[#d6504c] flex items-center justify-between gap-4 text-xs font-medium">
+          <div className="mb-6 p-4 border border-[#dc322f] bg-[#dc322f]/10 text-[#dc322f] flex items-center justify-between gap-4 text-xs font-medium">
             <div className="flex items-center gap-2.5">
               <ShieldAlert className="w-4 h-4 shrink-0" />
               <span>{noticeMessage}</span>
@@ -3193,7 +2644,7 @@ export default function SyntheticVideoDetector() {
             <button
               type="button"
               onClick={() => setNoticeMessage(null)}
-              className="px-2.5 py-1 border border-[#d6504c]/40 hover:bg-[#d6504c]/20 text-xs font-semibold"
+              className="px-2.5 py-1 border border-[#dc322f]/40 hover:bg-[#dc322f]/20 text-xs font-semibold"
             >
               OK
             </button>
@@ -3204,37 +2655,30 @@ export default function SyntheticVideoDetector() {
             <div
               className={`tech-panel relative overflow-hidden mb-8 border ${
                 isDarkMode
-                  ? "bg-[#1d2cf3] border-[#2f6fdb]/60"
-                  : "bg-[#2434f7] border-[#1d4ed8]"
+                  ? "bg-[#0b3c4d] border-[#2aa198]/40"
+                  : "bg-[#073642] border-[#073642]"
               }`}
             >
-              {/* Các mảng ô vuông tông xanh đậm/nhạt kiểu pixel kiến trúc giống ảnh mẫu */}
-              <div aria-hidden className="absolute left-[26%] top-0 w-[15%] h-[42%] bg-white/[0.06]" />
-              <div aria-hidden className="absolute left-[54%] top-0 w-[12%] h-[28%] bg-[#0a1499]/35" />
-              <div aria-hidden className="absolute left-[66%] top-[28%] w-[18%] h-[44%] bg-white/[0.05]" />
-              <div aria-hidden className="absolute left-0 top-[52%] w-[14%] h-[36%] bg-white/[0.05]" />
-              <div aria-hidden className="absolute right-0 top-[8%] w-[16%] h-[36%] bg-white/[0.06]" />
-              <div aria-hidden className="absolute left-[42%] bottom-0 w-[18%] h-[32%] bg-[#0a1499]/30" />
+              {/* Các ô vuông mờ kiểu pixel */}
+              <div aria-hidden className="absolute left-[28%] top-0 w-[14%] h-[38%] bg-white/[0.05]" />
+              <div aria-hidden className="absolute left-[58%] top-0 w-[10%] h-[26%] bg-white/[0.06]" />
+              <div aria-hidden className="absolute left-0 top-[48%] w-[12%] h-[34%] bg-white/[0.05]" />
+              <div aria-hidden className="absolute right-0 top-[10%] w-[16%] h-[32%] bg-white/[0.05]" />
+              <div aria-hidden className="absolute left-[40%] bottom-0 w-[18%] h-[30%] bg-white/[0.04]" />
 
-              <div className="relative grid lg:grid-cols-12 items-center gap-4 px-8 py-8 sm:px-12 sm:py-10">
-                <div className="lg:col-span-5">
-                  <p className="text-xs font-semibold tracking-[0.25em] text-white/75 mb-4">
-                    VARUNA
-                  </p>
-                  <h1 className="text-4xl sm:text-5xl font-extrabold uppercase text-white mb-5 tracking-tight">
-                    Synthetic Video Detection
-                  </h1>
-                  <p className="text-white/85 max-w-lg text-base leading-relaxed">
-                    {t(
-                      "Tải lên một video để dự đoán video có phải được các model Diffusion tạo ra.",
-                      "Upload a video to predict whether it was generated by Diffusion models."
-                    )}
-                  </p>
-                </div>
-
-                <div className="lg:col-span-7 h-[320px] sm:h-[360px] relative">
-                  <Glass3D />
-                </div>
+              <div className="relative p-8 sm:p-12">
+                <p className="text-xs font-semibold tracking-[0.25em] text-white/70 mb-3">
+                  VARUNA
+                </p>
+                <h1 className="text-3xl sm:text-5xl font-extrabold uppercase text-white mb-5 tracking-tight">
+                  Synthetic Video Detection
+                </h1>
+                <p className="text-white/85 max-w-5xl text-sm sm:text-[15px] leading-relaxed text-justify sm:text-left">
+                  {t(
+                    "Sự phát triển nhanh chóng của các mô hình tạo video AI (công nghệ Diffusion) khiến việc nhận diện nội dung giả mạo ngày càng cấp thiết nhưng cũng đầy thách thức. Nhóm đã nghiên cứu và tạo ra một kiến trúc học sâu tên là VARUNA. Kiến trúc này kết hợp hai nhánh, một là nhánh không gian (chuyên về khai thác những đặc trưng về ngữ cảnh không gian), hai là nhánh tần số (chuyên về khai thác những lỗi artifact mà Diffusion vốn đã có) và kết hợp với một phép nối ghép đặc trưng (Concatenation). Hai nhánh đều sử dụng mô hình nền tảng để trích xuất thông tin để mô hình có thể dễ dàng xử lí thông tin. Kết quả cho thấy một mô hình nhẹ mà vẫn giữ được hiệu năng cao so với những giải pháp MLLM trước đó, cũng như là tránh giảm được sự overfit trên dữ liệu. Bên cạnh đó, mô hình cũng có khả năng tổng quát tốt trên các mô hình Diffusion chưa gặp, giúp mô hình giảm khả năng lỗi thời trước sự phát triển nhanh chóng của công nghệ Diffusion. Dự án nghiên cứu này nhằm tạo ra một giải pháp cho vấn đề tin giả từ AI trên các nền tảng video, giúp bảo vệ niềm tin công chúng, an ninh chính trị và phòng chống những kẻ xấu trên mạng xã hội.",
+                    "The rapid evolution of AI video generation models (Diffusion technology) makes detecting synthetic media increasingly urgent yet challenging. Our team researched and developed a deep learning architecture named VARUNA. It combines two branches: a spatial branch (specialized in capturing spatial context features) and a frequency branch (specialized in exposing intrinsic Diffusion artifacts), fused via feature concatenation. Both branches use foundation models for feature extraction so information is processed efficiently. Results demonstrate a lightweight model that maintains high performance compared to prior MLLM solutions while mitigating overfitting. Moreover, VARUNA generalizes effectively to unseen Diffusion models, reducing the risk of obsolescence as Diffusion technology advances. This research project aims to provide a practical defense against AI video disinformation, helping safeguard public trust, political security, and social media integrity."
+                  )}
+                </p>
               </div>
             </div>
 
@@ -3246,7 +2690,7 @@ export default function SyntheticVideoDetector() {
                   <h2
                     className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider flex items-center gap-2`}
                   >
-                    <Gauge className="w-4 h-4 text-[#2f6fdb]" /> {t("Chỉ số đánh giá", "Evaluation metrics")}
+                    <Gauge className="w-4 h-4 text-[#268bd2]" /> {t("Chỉ số đánh giá", "Evaluation metrics")}
                   </h2>
 
                   <div className="flex items-center gap-3">
@@ -3321,7 +2765,7 @@ export default function SyntheticVideoDetector() {
                 </p>
 
                 {(metrics.nPos === 0 || metrics.nNeg === 0) && (
-                  <p className={`text-[11px] text-[#c48a1a] mt-1`}>
+                  <p className={`text-[11px] text-[#b58900] mt-1`}>
                     {metrics.nPos === 0
                       ? t("Tập nhãn khớp hiện không có video nào gắn nhãn AI (1) — nên Recall, F1 và AUROC hiển thị N/A vì không đủ dữ liệu để tính, không phải model làm sai.", "No matched video is labelled AI (1), so Recall, F1 and AUROC show N/A: there is not enough data to compute them. The model is not at fault.")
                       : t("Tập nhãn khớp hiện không có video nào gắn nhãn Real (0) — nên AUROC hiển thị N/A vì không đủ dữ liệu để tính.", "No matched video is labelled Real (0), so AUROC shows N/A: there is not enough data to compute it.")}
@@ -3331,7 +2775,7 @@ export default function SyntheticVideoDetector() {
                 {metrics.precision === 0 &&
                   metrics.tp === 0 &&
                   metrics.fp > 0 && (
-                    <p className={`text-[11px] text-[#d6504c] mt-1`}>
+                    <p className={`text-[11px] text-[#dc322f] mt-1`}>
                       {t("Precision 0% có nghĩa: trong", "Precision 0% means: among")} {metrics.fp} {t("video model đoán là \"AI\", không cái nào thật sự là AI theo CSV — thử kéo threshold cao hơn để giảm báo động giả.", "videos the model predicted as \"AI\", none is actually AI according to the CSV. Try raising the threshold to reduce false alarms.")}
                     </p>
                   )}
@@ -3342,7 +2786,7 @@ export default function SyntheticVideoDetector() {
               className={`tech-panel ${theme.bgCard} border ${theme.border} p-5 mb-6 flex flex-wrap items-center gap-6`}
             >
               <div className="flex items-start gap-3.5 flex-1 min-w-[280px]">
-                <div className="w-9 h-9 bg-[#2f6fdb] text-white flex items-center justify-center shrink-0 mt-0.5">
+                <div className="w-9 h-9 bg-[#2aa198]/15 border border-[#2aa198]/50 text-[#2aa198] flex items-center justify-center shrink-0 mt-0.5">
                   <SlidersHorizontal className="w-4 h-4" />
                 </div>
 
@@ -3359,14 +2803,14 @@ export default function SyntheticVideoDetector() {
                           onClick={() => setThreshold(preset)}
                           className={`font-mono-tech text-[10px] px-1.5 py-0.5 border transition-colors ${
                             Math.abs(threshold - preset) < 0.005
-                              ? "bg-[#2f6fdb]/15 border-[#2f6fdb] text-[#2f6fdb] font-bold"
-                              : `${theme.border} ${theme.textSub} hover:border-[#2f6fdb]/50`
+                              ? "bg-[#2aa198]/15 border-[#2aa198] text-[#2aa198] font-bold"
+                              : `${theme.border} ${theme.textSub} hover:border-[#2aa198]/50`
                           }`}
                         >
                           {Math.round(preset * 100)}%
                         </button>
                       ))}
-                      <span className="font-mono-tech text-xs font-bold px-2.5 py-0.5 bg-[#2f6fdb] text-white border border-white/30 ml-1">
+                      <span className="font-mono-tech text-xs font-bold px-2.5 py-0.5 bg-[#2aa198] text-white border border-white/20 ml-1">
                         {(threshold * 100).toFixed(0)}%
                       </span>
                     </div>
@@ -3383,7 +2827,7 @@ export default function SyntheticVideoDetector() {
                     className="threshold-slider"
                   />
 
-                  <div className="flex justify-between font-mono-tech text-[10px] text-[#2f6fdb]/80 mt-1">
+                  <div className={`flex justify-between font-mono-tech text-[10px] ${theme.textSub} mt-1`}>
                     <span>0% (REAL)</span>
                     <span>25%</span>
                     <span>50%</span>
@@ -3393,7 +2837,7 @@ export default function SyntheticVideoDetector() {
 
                   <p className={`text-[11px] ${theme.textSub} mt-1.5`}>
                     {t("Video có xác suất AI lớn hơn", "Videos with an AI probability above")}{" "}
-                    <span className="font-semibold text-[#2f6fdb]">{(threshold * 100).toFixed(0)}%</span>{" "}
+                    <span className="font-semibold text-[#2aa198]">{(threshold * 100).toFixed(0)}%</span>{" "}
                     {t("sẽ bị coi là AI-generated. Chỉnh xong áp dụng ngay, không cần chạy lại pipeline.", "are treated as AI-generated. Changes apply instantly, no need to rerun the pipeline.")}
                   </p>
                 </div>
@@ -3426,13 +2870,13 @@ export default function SyntheticVideoDetector() {
                   type="checkbox"
                   checked={mockMode}
                   onChange={(e) => setMockMode(e.target.checked)}
-                  className="accent-[#c48a1a] mt-0.5"
+                  className="accent-[#b58900] mt-0.5"
                 />
 
                 <span>
                   <span
                     className={`text-xs font-bold flex items-center gap-1 ${
-                      mockMode ? "text-[#c48a1a]" : theme.textHeading
+                      mockMode ? "text-[#b58900]" : theme.textHeading
                     }`}
                   >
                     <FlaskConical className="w-3.5 h-3.5" /> {t("Chế độ test (dữ liệu giả)", "Test mode (mock data)")}
@@ -3474,7 +2918,7 @@ export default function SyntheticVideoDetector() {
                         <h2
                           className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider flex items-center gap-2`}
                         >
-                          <Play className="w-4 h-4 text-[#2f6fdb]" /> {t("Video đầu vào", "Video input")}
+                          <Play className="w-4 h-4 text-[#2aa198]" /> {t("Video đầu vào", "Video input")}
                         </h2>
 
                         {singleSourceMode === "file" && selectedFile && (
@@ -3505,15 +2949,15 @@ export default function SyntheticVideoDetector() {
                       {singleSourceMode === "file" ? (
                         !selectedFile ? (
                           <label
-                            className={`border border-dashed ${theme.border} hover:border-[#2f6fdb] ${theme.inputBg} p-12 flex flex-col items-center justify-center cursor-pointer transition-colors group`}
+                            className={`border border-dashed ${theme.border} hover:border-[#2aa198] ${theme.inputBg} p-12 flex flex-col items-center justify-center cursor-pointer transition-colors group`}
                           >
-                            <Upload className="w-12 h-12 text-[#a7b1bf] group-hover:text-[#2f6fdb] mb-4 transition-colors" />
+                            <Upload className="w-12 h-12 text-[#93a1a1] group-hover:text-[#2aa198] mb-4 transition-colors" />
 
                             <p
                               className={`text-sm ${theme.textHeading} font-medium mb-1`}
                             >
                               Drag and drop video here or{" "}
-                              <span className="text-[#2f6fdb]">
+                              <span className="text-[#268bd2]">
                                 {t("browse files", "browse files")}
                               </span>
                             </p>
@@ -3550,7 +2994,7 @@ export default function SyntheticVideoDetector() {
                               <button
                                 onClick={handleAnalyze}
                                 disabled={isAnalyzing}
-                                className="flex-1 bg-[#2f6fdb] hover:brightness-110 text-white font-bold py-3 px-6 border border-[#2f6fdb] flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                                className="flex-1 bg-[#268bd2] hover:brightness-110 text-white font-bold py-3 px-6 border border-[#268bd2] flex items-center justify-center gap-2 transition-all disabled:opacity-50"
                               >
                                 {isAnalyzing ? (
                                   <>
@@ -3585,7 +3029,7 @@ export default function SyntheticVideoDetector() {
                               setSingleUrlInput(e.target.value)
                             }
                             placeholder={t("Dán link YouTube / TikTok / Facebook...", "Paste a YouTube / TikTok / Facebook link...")}
-                            className={`w-full px-4 py-3 border ${theme.border} ${theme.inputBg} ${theme.textHeading} text-sm outline-none focus:border-[#2f6fdb]`}
+                            className={`w-full px-4 py-3 border ${theme.border} ${theme.inputBg} ${theme.textHeading} text-sm outline-none focus:border-[#2aa198]`}
                           />
 
                           <div
@@ -3610,7 +3054,7 @@ export default function SyntheticVideoDetector() {
                             <button
                               onClick={handleAnalyze}
                               disabled={isAnalyzing || !singleUrlInput.trim()}
-                              className="flex-1 bg-[#2f6fdb] hover:brightness-110 text-white font-bold py-3 px-6 border border-[#2f6fdb] flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                              className="flex-1 bg-[#268bd2] hover:brightness-110 text-white font-bold py-3 px-6 border border-[#268bd2] flex items-center justify-center gap-2 transition-all disabled:opacity-50"
                             >
                               {isAnalyzing ? (
                                 <>
@@ -3647,7 +3091,7 @@ export default function SyntheticVideoDetector() {
                         <h2
                           className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider mb-6 flex items-center gap-2`}
                         >
-                          <BarChart2 className="w-4 h-4 text-[#2f6fdb]" />{" "}
+                          <BarChart2 className="w-4 h-4 text-[#268bd2]" />{" "}
                           {t("Kết quả phân tích", "Analysis Results")}
                         </h2>
 
@@ -3674,7 +3118,7 @@ export default function SyntheticVideoDetector() {
                               <div className={`h-20 ${theme.bgMain}`}></div>
                             </div>
 
-                            <p className="text-xs text-center text-[#2f6fdb] animate-pulse">
+                            <p className="text-xs text-center text-[#268bd2] animate-pulse">
                               {t("Extracting Spatial & Temporal Features...", "Extracting spatial & temporal features...")}
                             </p>
 
@@ -3685,7 +3129,7 @@ export default function SyntheticVideoDetector() {
                         )}
 
                         {!isAnalyzing && singleEntry?.error && (
-                          <div className="text-center py-16 text-[#d6504c]">
+                          <div className="text-center py-16 text-[#dc322f]">
                             <X className="w-12 h-12 mx-auto mb-3 opacity-60" />
                             <p className="text-sm">
                               {t("Lỗi:", "Error:")} {singleEntry.error}
@@ -3737,7 +3181,7 @@ export default function SyntheticVideoDetector() {
                     <h2
                       className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider mb-4 flex items-center gap-2`}
                     >
-                      <BarChart2 className="w-4 h-4 text-[#2f6fdb]" /> {t("Phân tích video", "Video Analysis")}
+                      <BarChart2 className="w-4 h-4 text-[#268bd2]" /> {t("Phân tích video", "Video Analysis")}
                     </h2>
 
                     <p className={`text-xs ${theme.textMain} mb-2`}>
@@ -3765,7 +3209,7 @@ export default function SyntheticVideoDetector() {
                     <h2
                       className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider flex items-center gap-2`}
                     >
-                      <Layers className="w-4 h-4 text-[#2f6fdb]" /> {t("Xử lý nhiều video", "Process multiple videos")}
+                      <Layers className="w-4 h-4 text-[#2aa198]" /> {t("Xử lý nhiều video", "Process multiple videos")}
                     </h2>
 
                     <div className="flex flex-wrap items-center gap-3">
@@ -3811,7 +3255,7 @@ export default function SyntheticVideoDetector() {
                       <button
                         onClick={runAllBatch}
                         disabled={isBatchRunning || pendingCount === 0}
-                        className="text-xs font-bold px-4 py-2 border bg-[#2f6fdb] hover:brightness-110 text-white flex items-center gap-2 transition-all disabled:opacity-50"
+                        className="text-xs font-bold px-4 py-2 border bg-[#268bd2] hover:brightness-110 text-white flex items-center gap-2 transition-all disabled:opacity-50"
                       >
                         {isBatchRunning ? (
                           <>
@@ -3865,7 +3309,7 @@ export default function SyntheticVideoDetector() {
                           t("Dán link YouTube / TikTok / Facebook..., mỗi dòng 1 link", "Paste YouTube / TikTok / Facebook links, one per line")
                         }
                         rows={3}
-                        className={`w-full px-3 py-2 border ${theme.border} ${theme.inputBg} ${theme.textHeading} text-xs outline-none focus:border-[#2f6fdb] mb-2`}
+                        className={`w-full px-3 py-2 border ${theme.border} ${theme.inputBg} ${theme.textHeading} text-xs outline-none focus:border-[#2aa198] mb-2`}
                       />
 
                       <div className="flex justify-end gap-2">
@@ -3882,7 +3326,7 @@ export default function SyntheticVideoDetector() {
                         <button
                           onClick={handleAddBatchUrls}
                           disabled={!batchUrlText.trim()}
-                          className="text-xs font-bold px-3 py-1.5 border bg-[#2f6fdb] hover:brightness-110 text-white disabled:opacity-50"
+                          className="text-xs font-bold px-3 py-1.5 border bg-[#268bd2] hover:brightness-110 text-white disabled:opacity-50"
                         >
                           {t("Thêm vào danh sách", "Add to list")}
                         </button>
@@ -3911,7 +3355,7 @@ export default function SyntheticVideoDetector() {
 
                       <button
                         onClick={clearCsv}
-                        className="text-[#d6504c] hover:underline"
+                        className="text-[#dc322f] hover:underline"
                       >
                         {t("Bỏ file CSV", "Remove CSV")}
                       </button>
@@ -3920,15 +3364,15 @@ export default function SyntheticVideoDetector() {
 
                   {batchItems.length === 0 ? (
                     <label
-                      className={`border border-dashed ${theme.border} hover:border-[#2f6fdb] ${theme.inputBg} p-12 flex flex-col items-center justify-center cursor-pointer transition-colors group`}
+                      className={`border border-dashed ${theme.border} hover:border-[#2aa198] ${theme.inputBg} p-12 flex flex-col items-center justify-center cursor-pointer transition-colors group`}
                     >
-                      <Upload className="w-12 h-12 text-[#a7b1bf] group-hover:text-[#2f6fdb] mb-4 transition-colors" />
+                      <Upload className="w-12 h-12 text-[#93a1a1] group-hover:text-[#2aa198] mb-4 transition-colors" />
 
                       <p
                         className={`text-sm ${theme.textHeading} font-medium mb-1`}
                       >
                         {t("Kéo thả nhiều video vào đây hoặc", "Drag & drop multiple videos here or")}{" "}
-                        <span className="text-[#2f6fdb]">{t("chọn nhiều file", "select multiple files")}</span>
+                        <span className="text-[#268bd2]">{t("chọn nhiều file", "select multiple files")}</span>
                       </p>
 
                       <p className={`text-xs ${theme.textMain}`}>
@@ -3970,7 +3414,7 @@ export default function SyntheticVideoDetector() {
                         <h2
                           className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider mb-4 flex items-center gap-2 truncate`}
                         >
-                          <Play className="w-4 h-4 text-[#2f6fdb] shrink-0" />{" "}
+                          <Play className="w-4 h-4 text-[#2aa198] shrink-0" />{" "}
                           <span className="truncate">
                             {selectedBatchItem.name}
                           </span>
@@ -3998,7 +3442,7 @@ export default function SyntheticVideoDetector() {
                                   href={selectedBatchItem.sourceUrl}
                                   target="_blank"
                                   rel="noreferrer"
-                                  className="text-xs text-[#2f6fdb] hover:underline break-all"
+                                  className="text-xs text-[#268bd2] hover:underline break-all"
                                 >
                                   {selectedBatchItem.sourceUrl}
                                 </a>
@@ -4033,7 +3477,7 @@ export default function SyntheticVideoDetector() {
                         <h2
                           className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider mb-6 flex items-center gap-2`}
                         >
-                          <BarChart2 className="w-4 h-4 text-[#2f6fdb]" />{" "}
+                          <BarChart2 className="w-4 h-4 text-[#268bd2]" />{" "}
                           {t("Kết quả phân tích", "Analysis Results")}
                         </h2>
 
@@ -4058,7 +3502,7 @@ export default function SyntheticVideoDetector() {
                               <div className={`h-20 ${theme.bgMain}`}></div>
                             </div>
 
-                            <p className="text-xs text-center text-[#2f6fdb] animate-pulse">
+                            <p className="text-xs text-center text-[#268bd2] animate-pulse">
                               {t("Extracting Spatial & Temporal Features...", "Extracting spatial & temporal features...")}
                             </p>
 
@@ -4069,7 +3513,7 @@ export default function SyntheticVideoDetector() {
                         )}
 
                         {selectedBatchItem.status === "error" && (
-                          <div className="text-center py-16 text-[#d6504c]">
+                          <div className="text-center py-16 text-[#dc322f]">
                             <X className="w-12 h-12 mx-auto mb-3 opacity-60" />
                             <p className="text-sm">
                               {t("Xử lý thất bại:", "Processing failed:")} {selectedBatchItem.error}
@@ -4079,7 +3523,7 @@ export default function SyntheticVideoDetector() {
 
                         {selectedBatchItem.status === "done" &&
                           activeBatchEntry?.error && (
-                            <div className="text-center py-16 text-[#d6504c]">
+                            <div className="text-center py-16 text-[#dc322f]">
                               <X className="w-12 h-12 mx-auto mb-3 opacity-60" />
                               <p className="text-sm">
                                 {t("Lỗi:", "Error:")} {activeBatchEntry.error}
@@ -4125,7 +3569,7 @@ export default function SyntheticVideoDetector() {
                       <h2
                         className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider mb-4 flex items-center gap-2`}
                       >
-                        <BarChart2 className="w-4 h-4 text-[#2f6fdb]" /> {t("Phân tích video", "Video Analysis")}
+                        <BarChart2 className="w-4 h-4 text-[#268bd2]" /> {t("Phân tích video", "Video Analysis")}
                       </h2>
 
                       <p className={`text-xs ${theme.textMain} mb-2`}>

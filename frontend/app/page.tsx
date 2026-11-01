@@ -2272,15 +2272,15 @@ export default function SyntheticVideoDetector() {
   }, [selectedBatchId]);
 
   const theme: Theme = {
-    bgMain: isDarkMode ? "bg-[#002b36]" : "bg-[#fdf6e3]",
-    bgCard: isDarkMode ? "bg-[#073642]" : "bg-[#eee8d5]",
+    bgMain: isDarkMode ? "bg-[#0b3c4d]" : "bg-[#fdf6e3]",
+    bgCard: isDarkMode ? "bg-[#073642]/95" : "bg-[#eee8d5]/95",
     textMain: isDarkMode ? "text-[#93a1a1]" : "text-[#586e75]",
     textHeading: isDarkMode ? "text-[#fdf6e3]" : "text-[#073642]",
     textSub: isDarkMode ? "text-[#839496]" : "text-[#657b83]",
-    border: isDarkMode ? "border-[#194b57]" : "border-[#d5ceb8]",
-    inputBg: isDarkMode ? "bg-[#00212b]/80" : "bg-[#fdf6e3]",
+    border: isDarkMode ? "border-[#1e5266]" : "border-[#d5ceb8]",
+    inputBg: isDarkMode ? "bg-[#052630]/85" : "bg-[#fdf6e3]",
     btnCancel: isDarkMode
-      ? "bg-[#00212b] hover:bg-[#194b57] text-[#93a1a1]"
+      ? "bg-[#052630] hover:bg-[#194b57] text-[#93a1a1]"
       : "bg-[#fdf6e3] hover:bg-[#e2dbc7] text-[#586e75]",
   };
 
@@ -2541,6 +2541,44 @@ export default function SyntheticVideoDetector() {
       }
     >
       <style>{INTEGRITY_CSS}</style>
+      {/* Nền toàn trang với các mảng ô vuông mờ kiểu pixel (từ thiết kế khung mẫu) */}
+      <div aria-hidden className="fixed inset-0 z-0 pointer-events-none overflow-hidden">
+        <div
+          className={`absolute left-[28%] top-0 w-[14%] h-[38%] ${
+            isDarkMode ? "bg-white/[0.05]" : "bg-[#073642]/[0.04]"
+          }`}
+        />
+        <div
+          className={`absolute left-[58%] top-0 w-[10%] h-[26%] ${
+            isDarkMode ? "bg-white/[0.06]" : "bg-[#073642]/[0.05]"
+          }`}
+        />
+        <div
+          className={`absolute left-0 top-[48%] w-[12%] h-[34%] ${
+            isDarkMode ? "bg-white/[0.05]" : "bg-[#073642]/[0.04]"
+          }`}
+        />
+        <div
+          className={`absolute right-0 top-[10%] w-[16%] h-[32%] ${
+            isDarkMode ? "bg-white/[0.05]" : "bg-[#073642]/[0.04]"
+          }`}
+        />
+        <div
+          className={`absolute left-[40%] bottom-0 w-[18%] h-[30%] ${
+            isDarkMode ? "bg-white/[0.04]" : "bg-[#073642]/[0.035]"
+          }`}
+        />
+        <div
+          className={`absolute left-[12%] top-[14%] w-[16%] h-[24%] ${
+            isDarkMode ? "bg-[#042430]/35" : "bg-[#073642]/[0.025]"
+          }`}
+        />
+        <div
+          className={`absolute right-[18%] bottom-[12%] w-[15%] h-[28%] ${
+            isDarkMode ? "bg-white/[0.035]" : "bg-[#073642]/[0.03]"
+          }`}
+        />
+      </div>
       <NeuralBackground isDarkMode={isDarkMode} />
 
       <header
@@ -2652,36 +2690,6 @@ export default function SyntheticVideoDetector() {
         )}
         {appMode === "classic" ? (
           <>
-            <div
-              className={`tech-panel relative overflow-hidden mb-8 border ${
-                isDarkMode
-                  ? "bg-[#0b3c4d] border-[#2aa198]/40"
-                  : "bg-[#073642] border-[#073642]"
-              }`}
-            >
-              {/* Các ô vuông mờ kiểu pixel */}
-              <div aria-hidden className="absolute left-[28%] top-0 w-[14%] h-[38%] bg-white/[0.05]" />
-              <div aria-hidden className="absolute left-[58%] top-0 w-[10%] h-[26%] bg-white/[0.06]" />
-              <div aria-hidden className="absolute left-0 top-[48%] w-[12%] h-[34%] bg-white/[0.05]" />
-              <div aria-hidden className="absolute right-0 top-[10%] w-[16%] h-[32%] bg-white/[0.05]" />
-              <div aria-hidden className="absolute left-[40%] bottom-0 w-[18%] h-[30%] bg-white/[0.04]" />
-
-              <div className="relative p-8 sm:p-12">
-                <p className="text-xs font-semibold tracking-[0.25em] text-white/70 mb-3">
-                  VARUNA
-                </p>
-                <h1 className="text-3xl sm:text-5xl font-extrabold uppercase text-white mb-5 tracking-tight">
-                  Synthetic Video Detection
-                </h1>
-                <p className="text-white/85 max-w-5xl text-sm sm:text-[15px] leading-relaxed text-justify sm:text-left">
-                  {t(
-                    "Sự phát triển nhanh chóng của các mô hình tạo video AI (công nghệ Diffusion) khiến việc nhận diện nội dung giả mạo ngày càng cấp thiết nhưng cũng đầy thách thức. Nhóm đã nghiên cứu và tạo ra một kiến trúc học sâu tên là VARUNA. Kiến trúc này kết hợp hai nhánh, một là nhánh không gian (chuyên về khai thác những đặc trưng về ngữ cảnh không gian), hai là nhánh tần số (chuyên về khai thác những lỗi artifact mà Diffusion vốn đã có) và kết hợp với một phép nối ghép đặc trưng (Concatenation). Hai nhánh đều sử dụng mô hình nền tảng để trích xuất thông tin để mô hình có thể dễ dàng xử lí thông tin. Kết quả cho thấy một mô hình nhẹ mà vẫn giữ được hiệu năng cao so với những giải pháp MLLM trước đó, cũng như là tránh giảm được sự overfit trên dữ liệu. Bên cạnh đó, mô hình cũng có khả năng tổng quát tốt trên các mô hình Diffusion chưa gặp, giúp mô hình giảm khả năng lỗi thời trước sự phát triển nhanh chóng của công nghệ Diffusion. Dự án nghiên cứu này nhằm tạo ra một giải pháp cho vấn đề tin giả từ AI trên các nền tảng video, giúp bảo vệ niềm tin công chúng, an ninh chính trị và phòng chống những kẻ xấu trên mạng xã hội.",
-                    "The rapid evolution of AI video generation models (Diffusion technology) makes detecting synthetic media increasingly urgent yet challenging. Our team researched and developed a deep learning architecture named VARUNA. It combines two branches: a spatial branch (specialized in capturing spatial context features) and a frequency branch (specialized in exposing intrinsic Diffusion artifacts), fused via feature concatenation. Both branches use foundation models for feature extraction so information is processed efficiently. Results demonstrate a lightweight model that maintains high performance compared to prior MLLM solutions while mitigating overfitting. Moreover, VARUNA generalizes effectively to unseen Diffusion models, reducing the risk of obsolescence as Diffusion technology advances. This research project aims to provide a practical defense against AI video disinformation, helping safeguard public trust, political security, and social media integrity."
-                  )}
-                </p>
-              </div>
-            </div>
-
             {metrics && (
               <div
                 className={`${theme.bgCard} border ${theme.border} p-6 mb-6`}

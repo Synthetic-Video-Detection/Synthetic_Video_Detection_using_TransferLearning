@@ -1035,6 +1035,36 @@ const INTEGRITY_CSS = `
   .integrity-ui button:not(:disabled):active { transform: scale(0.98); }
   .integrity-ui :focus-visible { outline: 2px solid #2f6fdb; outline-offset: 2px; }
 
+  /* Khối kính 3D (lăng trụ + cột chữ I) */
+  .v3d-scene { position: relative; width: 100%; height: 100%; perspective: 1100px; }
+  .v3d-float {
+    position: absolute; inset: 0; transform-style: preserve-3d;
+    animation: v3d-sway 16s ease-in-out infinite alternate;
+  }
+  .v3d-stage {
+    position: absolute; left: 50%; top: 50%; width: 0; height: 0;
+    transform-style: preserve-3d;
+    animation: v3d-bob 6s ease-in-out infinite alternate;
+  }
+  .v3d-obj { position: absolute; transform-style: preserve-3d; }
+  .v3d-face { position: absolute; box-sizing: border-box; overflow: visible; }
+  .v3d-glass {
+    background: linear-gradient(135deg, rgba(255,255,255,0.50) 0%, rgba(90,215,255,0.34) 40%, rgba(40,130,255,0.50) 100%);
+    border: 1.5px solid rgba(255,255,255,0.62);
+  }
+  .v3d-glass-dim {
+    background: linear-gradient(160deg, rgba(120,225,255,0.28) 0%, rgba(30,100,235,0.46) 100%);
+    border: 1.5px solid rgba(255,255,255,0.45);
+  }
+  @keyframes v3d-sway {
+    from { transform: rotateX(-10deg) rotateY(-34deg); }
+    to { transform: rotateX(-4deg) rotateY(26deg); }
+  }
+  @keyframes v3d-bob {
+    from { transform: translateY(-8px); }
+    to { transform: translateY(8px); }
+  }
+
   @keyframes fade-in-up {
     from { opacity: 0; transform: translateY(12px); }
     to { opacity: 1; transform: none; }
@@ -1044,11 +1074,78 @@ const INTEGRITY_CSS = `
   @media (prefers-reduced-motion: reduce) {
     html { scroll-behavior: auto; }
     .fade-in-up { animation: none; }
+    .v3d-float, .v3d-stage { animation: none; }
+    .v3d-float { transform: rotateX(-8deg) rotateY(-18deg); }
     .integrity-ui :where(div, button, a, span, label, input, select, textarea, p, tr, td, th) {
       transition-duration: 0.01ms;
     }
   }
 `;
+
+
+// ── Khối kính 3D: lăng trụ tam giác + cột chữ nhật (CSS 3D, không cần thư viện) ──
+function Glass3D() {
+  const W = 190, H = 230, D = 84; // lăng trụ
+  const L = Math.sqrt((W / 2) ** 2 + H ** 2);
+  const th = (Math.atan(W / 2 / H) * 180) / Math.PI;
+  const cw = 66, ch = 250, cd = 66; // cột
+
+  const tri = (z: number, id: string, cls: string) => (
+    <svg
+      className="v3d-face"
+      style={{ left: 0, top: 0, width: W, height: H, transform: `translateZ(${z}px)` }}
+      viewBox={`0 0 ${W} ${H}`}
+    >
+      <defs>
+        <linearGradient id={id} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#ffffff" stopOpacity={cls === "f" ? 0.5 : 0.25} />
+          <stop offset="0.45" stopColor="#5ad7ff" stopOpacity={cls === "f" ? 0.38 : 0.3} />
+          <stop offset="1" stopColor="#2882ff" stopOpacity={cls === "f" ? 0.5 : 0.45} />
+        </linearGradient>
+      </defs>
+      <polygon
+        points={`${W / 2},1 1,${H - 1} ${W - 1},${H - 1}`}
+        fill={`url(#${id})`}
+        stroke="rgba(255,255,255,0.7)"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+
+  return (
+    <div className="v3d-scene" aria-hidden>
+      <div className="v3d-float">
+        <div className="v3d-stage">
+          {/* Lăng trụ tam giác */}
+          <div
+            className="v3d-obj"
+            style={{ width: W, height: H, left: -W / 2 - 100, top: -H / 2 + 12, transform: "translateZ(-10px)" }}
+          >
+            {tri(D / 2, "v3dTriFront", "f")}
+            {tri(-D / 2, "v3dTriBack", "b")}
+            <div className="v3d-face v3d-glass-dim" style={{ width: W, height: D, left: 0, top: H - D / 2, transform: "rotateX(90deg)" }} />
+            <div className="v3d-face v3d-glass" style={{ width: D, height: L, left: W / 4 - D / 2, top: H / 2 - L / 2, transform: `rotateZ(${th}deg) rotateY(90deg)` }} />
+            <div className="v3d-face v3d-glass-dim" style={{ width: D, height: L, left: (3 * W) / 4 - D / 2, top: H / 2 - L / 2, transform: `rotateZ(${-th}deg) rotateY(90deg)` }} />
+          </div>
+
+          {/* Cột chữ I */}
+          <div
+            className="v3d-obj"
+            style={{ width: cw, height: ch, left: -cw / 2 + 105, top: -ch / 2 - 4, transform: "translateZ(30px)" }}
+          >
+            <div className="v3d-face v3d-glass" style={{ width: cw, height: ch, left: 0, top: 0, transform: `translateZ(${cd / 2}px)` }} />
+            <div className="v3d-face v3d-glass-dim" style={{ width: cw, height: ch, left: 0, top: 0, transform: `rotateY(180deg) translateZ(${cd / 2}px)` }} />
+            <div className="v3d-face v3d-glass-dim" style={{ width: cd, height: ch, left: (cw - cd) / 2, top: 0, transform: `rotateY(90deg) translateZ(${cw / 2}px)` }} />
+            <div className="v3d-face v3d-glass" style={{ width: cd, height: ch, left: (cw - cd) / 2, top: 0, transform: `rotateY(-90deg) translateZ(${cw / 2}px)` }} />
+            <div className="v3d-face v3d-glass" style={{ width: cw, height: cd, left: 0, top: (ch - cd) / 2, transform: `rotateX(90deg) translateZ(${ch / 2}px)` }} />
+            <div className="v3d-face v3d-glass-dim" style={{ width: cw, height: cd, left: 0, top: (ch - cd) / 2, transform: `rotateX(-90deg) translateZ(${ch / 2}px)` }} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 
 function ResultSummary({
@@ -1755,7 +1852,7 @@ function DashboardView({
         <button
           onClick={runAllBatch}
           disabled={isBatchRunning}
-          className="ml-auto text-xs font-bold px-4 py-2 border bg-[#3d9a6e] hover:brightness-110 text-[#0e131a] disabled:opacity-50 flex items-center gap-1.5"
+          className="ml-auto text-xs font-bold px-4 py-2 border bg-[#2f6fdb] hover:brightness-110 text-white disabled:opacity-50 flex items-center gap-1.5"
         >
           {isBatchRunning ? (
             <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -1795,7 +1892,7 @@ function DashboardView({
             <button
               onClick={handleAddBatchUrls}
               disabled={!batchUrlText.trim()}
-              className="text-xs font-bold px-3 py-1.5 border bg-[#3d9a6e] hover:brightness-110 text-[#0e131a] disabled:opacity-50"
+              className="text-xs font-bold px-3 py-1.5 border bg-[#2f6fdb] hover:brightness-110 text-white disabled:opacity-50"
             >
               {t("Thêm vào danh sách", "Add to list")}
             </button>
@@ -2561,27 +2658,41 @@ export default function SyntheticVideoDetector() {
       <main key={appMode} className="relative z-10 max-w-7xl mx-auto px-6 py-10 fade-in-up">
         {appMode === "classic" ? (
           <>
-            <div className={`mb-8 pb-8 border-b ${theme.border}`}>
-              <p className="text-xs font-semibold tracking-[0.2em] text-[#2f6fdb] mb-3">
-                VARUNA
-              </p>
-              <h1
-                className={`text-4xl sm:text-5xl font-extrabold ${theme.textHeading} mb-4`}
-              >
-                Synthetic Video Detection
-              </h1>
-              <p className={`${theme.textSub} max-w-3xl text-base`}>
-                {t("Tải lên một video để dự đoán video có phải được các model Diffusion tạo ra.", "Upload a video to predict whether it was generated by Diffusion models.")}
-              </p>
-              <div className="flex flex-wrap gap-2 mt-5">
-                {["#VARUNA", "#DIFFUSION", "#SPATIOTEMPORAL"].map((tag) => (
-                  <span
-                    key={tag}
-                    className={`px-3 py-1 text-[11px] font-semibold tracking-wider border rounded-sm ${theme.border} ${theme.textSub}`}
-                  >
-                    {tag}
-                  </span>
-                ))}
+            <div
+              className={`relative overflow-hidden mb-8 border ${
+                isDarkMode ? "bg-[#1c2a8c] border-[#27313f]" : "bg-[#3140f0] border-[#3140f0]"
+              }`}
+            >
+              {/* Các ô vuông mờ kiểu pixel */}
+              <div aria-hidden className="absolute left-[28%] top-0 w-[14%] h-[38%] bg-white/[0.05]" />
+              <div aria-hidden className="absolute left-[58%] top-0 w-[10%] h-[26%] bg-white/[0.06]" />
+              <div aria-hidden className="absolute left-0 top-[48%] w-[12%] h-[34%] bg-white/[0.05]" />
+              <div aria-hidden className="absolute right-0 top-[10%] w-[16%] h-[32%] bg-white/[0.05]" />
+              <div aria-hidden className="absolute left-[40%] bottom-0 w-[18%] h-[30%] bg-white/[0.04]" />
+
+              <div className="relative grid lg:grid-cols-2 items-center gap-4 p-8 sm:p-12">
+                <div>
+                  <p className="text-xs font-semibold tracking-[0.25em] text-white/70 mb-4">
+                    VARUNA
+                  </p>
+                  <h1 className="text-4xl sm:text-5xl font-extrabold uppercase text-white mb-5">
+                    Synthetic Video Detection
+                  </h1>
+                  <p className="text-white/80 max-w-xl text-base">
+                    {t("Tải lên một video để dự đoán video có phải được các model Diffusion tạo ra.", "Upload a video to predict whether it was generated by Diffusion models.")}
+                  </p>
+                  <div className="flex flex-wrap gap-x-6 gap-y-1 mt-6">
+                    {["#VARUNA", "#DIFFUSION", "#SPATIOTEMPORAL"].map((tag) => (
+                      <span key={tag} className="text-[11px] font-medium tracking-wider text-white/55">
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="hidden lg:block h-[340px]">
+                  <Glass3D />
+                </div>
               </div>
             </div>
 
@@ -2869,7 +2980,7 @@ export default function SyntheticVideoDetector() {
                               <button
                                 onClick={handleAnalyze}
                                 disabled={isAnalyzing}
-                                className="flex-1 bg-[#3d9a6e] hover:brightness-110 text-[#0e131a] font-bold py-3 px-6 border border-[#3d9a6e] flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                                className="flex-1 bg-[#2f6fdb] hover:brightness-110 text-white font-bold py-3 px-6 border border-[#2f6fdb] flex items-center justify-center gap-2 transition-all disabled:opacity-50"
                               >
                                 {isAnalyzing ? (
                                   <>
@@ -2929,7 +3040,7 @@ export default function SyntheticVideoDetector() {
                             <button
                               onClick={handleAnalyze}
                               disabled={isAnalyzing || !singleUrlInput.trim()}
-                              className="flex-1 bg-[#3d9a6e] hover:brightness-110 text-[#0e131a] font-bold py-3 px-6 border border-[#3d9a6e] flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                              className="flex-1 bg-[#2f6fdb] hover:brightness-110 text-white font-bold py-3 px-6 border border-[#2f6fdb] flex items-center justify-center gap-2 transition-all disabled:opacity-50"
                             >
                               {isAnalyzing ? (
                                 <>
@@ -3084,8 +3195,7 @@ export default function SyntheticVideoDetector() {
                     <h2
                       className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider flex items-center gap-2`}
                     >
-                      <Layers className="w-4 h-4 text-[#3d9a6e]" /> {t("Xử lý nhiều", "Process multiple")}
-                      video
+                      <Layers className="w-4 h-4 text-[#3d9a6e]" /> {t("Xử lý nhiều video", "Process multiple videos")}
                     </h2>
 
                     <div className="flex flex-wrap items-center gap-3">
@@ -3131,7 +3241,7 @@ export default function SyntheticVideoDetector() {
                       <button
                         onClick={runAllBatch}
                         disabled={isBatchRunning || pendingCount === 0}
-                        className="text-xs font-bold px-4 py-2 border bg-[#3d9a6e] hover:brightness-110 text-[#0e131a] flex items-center gap-2 transition-all disabled:opacity-50"
+                        className="text-xs font-bold px-4 py-2 border bg-[#2f6fdb] hover:brightness-110 text-white flex items-center gap-2 transition-all disabled:opacity-50"
                       >
                         {isBatchRunning ? (
                           <>
@@ -3202,7 +3312,7 @@ export default function SyntheticVideoDetector() {
                         <button
                           onClick={handleAddBatchUrls}
                           disabled={!batchUrlText.trim()}
-                          className="text-xs font-bold px-3 py-1.5 border bg-[#3d9a6e] hover:brightness-110 text-[#0e131a] disabled:opacity-50"
+                          className="text-xs font-bold px-3 py-1.5 border bg-[#2f6fdb] hover:brightness-110 text-white disabled:opacity-50"
                         >
                           {t("Thêm vào danh sách", "Add to list")}
                         </button>

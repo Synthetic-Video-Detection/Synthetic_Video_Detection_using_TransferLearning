@@ -2218,6 +2218,19 @@ export default function SyntheticVideoDetector() {
       localStorage.setItem("svd-lang", lang);
     } catch {}
   }, [lang]);
+
+  useEffect(() => {
+    document.title = "VARUNA - Synthetic Video Detection";
+    const faviconSvg = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='52 43 920 920'%3E%3Cpath fill='%23268bd2' fill-rule='evenodd' d='M 512 111 L 934 895 L 90 895 Z M 512 461 L 370 728 L 654 728 Z'/%3E%3C/svg%3E";
+    let link: HTMLLinkElement | null = document.querySelector("link[rel*='icon']");
+    if (!link) {
+      link = document.createElement("link");
+      link.rel = "icon";
+      document.head.appendChild(link);
+    }
+    link.type = "image/svg+xml";
+    link.href = faviconSvg;
+  }, []);
   const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD);
   const [mockMode, setMockMode] = useState(false);
   const [repeats, setRepeats] = useState(1);
@@ -2540,6 +2553,8 @@ export default function SyntheticVideoDetector() {
         } as React.CSSProperties
       }
     >
+      <title>VARUNA - Synthetic Video Detection</title>
+      <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='52 43 920 920'%3E%3Cpath fill='%23268bd2' fill-rule='evenodd' d='M 512 111 L 934 895 L 90 895 Z M 512 461 L 370 728 L 654 728 Z'/%3E%3C/svg%3E" />
       <style>{INTEGRITY_CSS}</style>
       {/* Nền toàn trang với các mảng ô vuông mờ kiểu pixel (từ thiết kế khung mẫu) */}
       <div aria-hidden className="fixed inset-0 z-0 pointer-events-none overflow-hidden">
@@ -2586,7 +2601,17 @@ export default function SyntheticVideoDetector() {
       >
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <span className="w-2.5 h-2.5 bg-[#268bd2]" aria-hidden />
+            <svg
+              className="w-6 h-6 shrink-0"
+              viewBox="0 0 1024 1024"
+              fill="#268bd2"
+              aria-label="VARUNA Logo"
+            >
+              <path
+                fillRule="evenodd"
+                d="M 512 111 L 934 895 L 90 895 Z M 512 461 L 370 728 L 654 728 Z"
+              />
+            </svg>
             <span
               className={`${theme.textHeading} font-extrabold text-xl tracking-[0.18em]`}
             >

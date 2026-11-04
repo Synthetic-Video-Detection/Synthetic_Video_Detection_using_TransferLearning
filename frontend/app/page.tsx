@@ -53,129 +53,148 @@ function t(vi: string, en: string): string {
   return CURRENT_LANG === "vi" ? vi : en;
 }
 
-// ── Nền mạng neural (node + liên kết + xung tín hiệu, seed cố định) ─────
-function NeuralBackground({ isDarkMode }: { isDarkMode: boolean }) {
-  const ref = useRef<HTMLCanvasElement>(null);
+// ── Nền Dot-Matrix Glow (tích hợp theo mẫu dot-matrixglow.framer.website) ──
+type DotGlowBackgroundProps = {
+  isDarkMode: boolean;
+  backgroundColor?: string;
+  dotColor?: string;
+  speed?: number;
+  dotSize?: number;
+  spacing?: number;
+  glowStrength?: number;
+  blobRadius?: number;
+};
+
+function DotGlowBackground({
+  isDarkMode,
+  backgroundColor,
+  dotColor,
+  speed = 1,
+  dotSize = 2.5,
+  spacing = 14,
+  glowStrength = 1.4,
+  blobRadius = 200,
+}: DotGlowBackgroundProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const rafRef = useRef<number>(0);
+
+  const resolvedBg = backgroundColor ?? (isDarkMode ? "#000000" : "#fdf6e3");
+  const resolvedDot = dotColor ?? (isDarkMode ? "#9ED3FF" : "#268bd2");
 
   useEffect(() => {
-    const canvas = ref.current;
-    const ctx = canvas?.getContext("2d");
-    if (!canvas || !ctx) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
 
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const rand = mulberry32(20260614);
-    const lineRGB = isDarkMode ? "38,139,210" : "147,161,161";
-    const nodeRGB = isDarkMode ? "131,148,150" : "101,123,131";
-    const pulseRGB = isDarkMode ? "42,161,152" : "38,139,210";
-    const LINK = 150;
+    let W = window.innerWidth;
+    let H = window.innerHeight;
+    let mouseX = -9999;
+    let mouseY = -9999;
 
-    type Node = { x: number; y: number; vx: number; vy: number; r: number };
-    type Pulse = { a: number; b: number; p: number };
-    let nodes: Node[] = [];
-    let pulses: Pulse[] = [];
-    let w = 0, h = 0, frame = 0, raf = 0;
-
-    const resize = () => {
-      w = window.innerWidth;
-      h = window.innerHeight;
-      canvas.width = w * dpr;
-      canvas.height = h * dpr;
-      canvas.style.width = `${w}px`;
-      canvas.style.height = `${h}px`;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      const n = Math.round(Math.min(80, Math.max(24, (w * h) / 22000)));
-      nodes = Array.from({ length: n }, () => ({
-        x: rand() * w,
-        y: rand() * h,
-        vx: (rand() - 0.5) * 0.28,
-        vy: (rand() - 0.5) * 0.28,
-        r: 1.2 + rand() * 1.6,
-      }));
-      pulses = [];
+    type BlobPoint = {
+      nx: number;
+      ny: number;
+      r: number;
+      speed: number;
     };
 
-    const draw = (move: boolean) => {
-      ctx.clearRect(0, 0, w, h);
+    const baseR = Math.max(60, blobRadius - 20);
+    const blobs: BlobPoint[] = Array.from({ length: 7 }).map(() => ({
+      nx: Math.random(),
+      ny: Math.random(),
+      r: baseR + Math.random() * baseR,
+      speed: 0.5 + Math.random(),
+    }));
 
-      if (move) {
-        for (const n of nodes) {
-          n.x += n.vx;
-          n.y += n.vy;
-          if (n.x < 0 || n.x > w) n.vx *= -1;
-          if (n.y < 0 || n.y > h) n.vy *= -1;
-        }
-      }
+    const resize = () => {
+      W = canvas.offsetWidth || window.innerWidth;
+      H = canvas.offsetHeight || window.innerHeight;
+      canvas.width = W * dpr;
+      canvas.height = H * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    resize();
+    window.addEventListener("resize", resize);
 
-      const near: [number, number][] = [];
-      for (let i = 0; i < nodes.length; i++) {
-        for (let j = i + 1; j < nodes.length; j++) {
-          const dx = nodes[i].x - nodes[j].x;
-          const dy = nodes[i].y - nodes[j].y;
-          const d = Math.sqrt(dx * dx + dy * dy);
-          if (d < LINK) {
-            near.push([i, j]);
-            ctx.strokeStyle = `rgba(${lineRGB},${(1 - d / LINK) * 0.5})`;
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(nodes[i].x, nodes[i].y);
-            ctx.lineTo(nodes[j].x, nodes[j].y);
-            ctx.stroke();
+    const handleMouseMove = (e: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      mouseX = e.clientX - rect.left;
+      mouseY = e.clientY - rect.top;
+    };
+    const handleMouseLeave = () => {
+      mouseX = -9999;
+      mouseY = -9999;
+    };
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseleave", handleMouseLeave);
+
+    let time = 0;
+
+    const render = () => {
+      if (!document.hidden) {
+        time += 0.01 * speed;
+
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = resolvedBg;
+        ctx.fillRect(0, 0, W, H);
+
+        const cols = Math.ceil(W / spacing);
+        const rows = Math.ceil(H / spacing);
+
+        ctx.fillStyle = resolvedDot;
+
+        for (let y = 0; y < rows; y++) {
+          const py = y * spacing;
+          for (let x = 0; x < cols; x++) {
+            const px = x * spacing;
+            let intensity = 0;
+
+            for (let i = 0; i < blobs.length; i++) {
+              const b = blobs[i];
+              const bx = b.nx * W + Math.sin(time * b.speed + i) * 120;
+              const by = b.ny * H + Math.cos(time * b.speed + i) * 120;
+              const d = Math.hypot(px - bx, py - by);
+              if (d < b.r) {
+                intensity += 1 - d / b.r;
+              }
+            }
+
+            const md = Math.hypot(px - mouseX, py - mouseY);
+            if (md < 200) {
+              intensity += (1 - md / 200) * 1.5;
+            }
+
+            if (intensity > 0.01) {
+              const alpha = Math.min(intensity * glowStrength, 1);
+              ctx.beginPath();
+              ctx.globalAlpha = alpha;
+              ctx.arc(px, py, dotSize * (0.6 + intensity), 0, Math.PI * 2);
+              ctx.fill();
+            }
           }
         }
       }
 
-      for (const n of nodes) {
-        ctx.fillStyle = `rgba(${nodeRGB},0.75)`;
-        ctx.beginPath();
-        ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      if (move) {
-        frame++;
-        if (frame % 36 === 0 && near.length > 0 && pulses.length < 14) {
-          const [a, b] = near[Math.floor(rand() * near.length)];
-          pulses.push({ a, b, p: 0 });
-        }
-        pulses = pulses.filter((q) => q.p < 1);
-        for (const q of pulses) {
-          q.p += 0.018;
-          const A = nodes[q.a], B = nodes[q.b];
-          const x = A.x + (B.x - A.x) * q.p;
-          const y = A.y + (B.y - A.y) * q.p;
-          const g = ctx.createRadialGradient(x, y, 0, x, y, 9);
-          g.addColorStop(0, `rgba(${pulseRGB},0.9)`);
-          g.addColorStop(1, `rgba(${pulseRGB},0)`);
-          ctx.fillStyle = g;
-          ctx.beginPath();
-          ctx.arc(x, y, 9, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
+      rafRef.current = requestAnimationFrame(render);
     };
 
-    const loop = () => {
-      if (!document.hidden) draw(true);
-      raf = requestAnimationFrame(loop);
-    };
-
-    resize();
-    window.addEventListener("resize", resize);
-    if (reduce) draw(false);
-    else raf = requestAnimationFrame(loop);
+    render();
 
     return () => {
-      cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseleave", handleMouseLeave);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [isDarkMode]);
+  }, [resolvedBg, resolvedDot, speed, dotSize, spacing, glowStrength, blobRadius]);
 
   return (
     <canvas
-      ref={ref}
+      ref={canvasRef}
       aria-hidden
-      className="fixed inset-0 z-0 pointer-events-none opacity-35"
+      className="fixed inset-0 z-0 pointer-events-none block w-full h-full"
     />
   );
 }
@@ -2556,45 +2575,7 @@ export default function SyntheticVideoDetector() {
       <title>Varuna - Diffusion Detection</title>
       <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='52 43 920 920'%3E%3Cpath fill='%23268bd2' fill-rule='evenodd' d='M 512 111 L 934 895 L 90 895 Z M 512 461 L 370 728 L 654 728 Z'/%3E%3C/svg%3E" />
       <style>{INTEGRITY_CSS}</style>
-      {/* Nền toàn trang với các mảng ô vuông mờ kiểu pixel (từ thiết kế khung mẫu) */}
-      <div aria-hidden className="fixed inset-0 z-0 pointer-events-none overflow-hidden">
-        <div
-          className={`absolute left-[28%] top-0 w-[14%] h-[38%] ${
-            isDarkMode ? "bg-white/[0.05]" : "bg-[#073642]/[0.04]"
-          }`}
-        />
-        <div
-          className={`absolute left-[58%] top-0 w-[10%] h-[26%] ${
-            isDarkMode ? "bg-white/[0.06]" : "bg-[#073642]/[0.05]"
-          }`}
-        />
-        <div
-          className={`absolute left-0 top-[48%] w-[12%] h-[34%] ${
-            isDarkMode ? "bg-white/[0.05]" : "bg-[#073642]/[0.04]"
-          }`}
-        />
-        <div
-          className={`absolute right-0 top-[10%] w-[16%] h-[32%] ${
-            isDarkMode ? "bg-white/[0.05]" : "bg-[#073642]/[0.04]"
-          }`}
-        />
-        <div
-          className={`absolute left-[40%] bottom-0 w-[18%] h-[30%] ${
-            isDarkMode ? "bg-white/[0.04]" : "bg-[#073642]/[0.035]"
-          }`}
-        />
-        <div
-          className={`absolute left-[12%] top-[14%] w-[16%] h-[24%] ${
-            isDarkMode ? "bg-[#042430]/35" : "bg-[#073642]/[0.025]"
-          }`}
-        />
-        <div
-          className={`absolute right-[18%] bottom-[12%] w-[15%] h-[28%] ${
-            isDarkMode ? "bg-white/[0.035]" : "bg-[#073642]/[0.03]"
-          }`}
-        />
-      </div>
-      <NeuralBackground isDarkMode={isDarkMode} />
+      <DotGlowBackground isDarkMode={isDarkMode} />
 
       <header
         className={`app-header border-b ${theme.border} ${theme.bgCard} sticky top-0 z-50 transition-colors duration-500`}

@@ -2220,7 +2220,7 @@ export default function SyntheticVideoDetector() {
   }, [lang]);
 
   useEffect(() => {
-    document.title = "VARUNA - Synthetic Video Detection";
+    document.title = "Varuna - Diffusion Detection";
     const faviconSvg = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='52 43 920 920'%3E%3Cpath fill='%23268bd2' fill-rule='evenodd' d='M 512 111 L 934 895 L 90 895 Z M 512 461 L 370 728 L 654 728 Z'/%3E%3C/svg%3E";
     let link: HTMLLinkElement | null = document.querySelector("link[rel*='icon']");
     if (!link) {
@@ -2553,7 +2553,7 @@ export default function SyntheticVideoDetector() {
         } as React.CSSProperties
       }
     >
-      <title>VARUNA - Synthetic Video Detection</title>
+      <title>Varuna - Diffusion Detection</title>
       <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='52 43 920 920'%3E%3Cpath fill='%23268bd2' fill-rule='evenodd' d='M 512 111 L 934 895 L 90 895 Z M 512 461 L 370 728 L 654 728 Z'/%3E%3C/svg%3E" />
       <style>{INTEGRITY_CSS}</style>
       {/* Nền toàn trang với các mảng ô vuông mờ kiểu pixel (từ thiết kế khung mẫu) */}

@@ -78,8 +78,8 @@ function DotGlowBackground({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number>(0);
 
-  const resolvedBg = backgroundColor ?? (isDarkMode ? "#000000" : "#fdf6e3");
-  const resolvedDot = dotColor ?? (isDarkMode ? "#9ED3FF" : "#268bd2");
+  const resolvedBg = backgroundColor ?? (isDarkMode ? "#0b3c4d" : "#fdf6e3");
+  const resolvedDot = dotColor ?? (isDarkMode ? "#4db8e8" : "#268bd2");
 
   useEffect(() => {
     const canvas = canvasRef.current;

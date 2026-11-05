@@ -933,7 +933,7 @@ function ResultSummary({
           <h3 className="font-semibold text-lg">
             {classified.isSynthetic ? t("Khả năng cao Video AI", "Likely an AI video") : t("Video thật", "Real video")}
           </h3>
-          <p className={`text-xs opacity-80 mt-1 ${theme.textMain}`}>
+          <p className={`text-xs mt-1 ${theme.textMain}`}>
             {classified.isSynthetic
               ? t("Hệ thống phát hiện ra những artifact đặc trưng của các công cụ Diffusion.", "The system detected artifacts typical of Diffusion tools.")
               : t("Khả năng cao video này không được tạo bởi các công cụ Diffusion.", "This video was most likely not made by Diffusion tools.")}
@@ -1020,6 +1020,8 @@ function ScoreChart({
   threshold: number;
   height?: number;
 }) {
+  const axisTextColor = isDarkMode ? "#b0c4ce" : "#475b63";
+
   return (
     <ResponsiveContainer width="100%" height={height}>
       <LineChart
@@ -1041,27 +1043,27 @@ function ScoreChart({
           type="number"
           domain={["dataMin", "dataMax"]}
           tick={{
-            fill: isDarkMode ? "#839496" : "#657b83",
+            fill: axisTextColor,
             fontSize: 12,
           }}
           label={{
             value: t("Thời gian (giây)", "Time (seconds)"),
             position: "bottom",
             offset: 0,
-            fill: isDarkMode ? "#839496" : "#657b83",
+            fill: axisTextColor,
           }}
         />
         <YAxis
           domain={[0, 1]}
           tick={{
-            fill: isDarkMode ? "#839496" : "#657b83",
+            fill: axisTextColor,
             fontSize: 12,
           }}
           label={{
             value: t("Điểm AI", "Synthetic score"),
             angle: -90,
             position: "insideLeft",
-            fill: isDarkMode ? "#839496" : "#657b83",
+            fill: axisTextColor,
           }}
         />
         <Tooltip
@@ -1090,12 +1092,12 @@ function ScoreChart({
         />
         <ReferenceLine
           y={threshold}
-          stroke={isDarkMode ? "#839496" : "#657b83"}
+          stroke={axisTextColor}
           strokeDasharray="4 4"
           label={{
             value: t("Ngưỡng", "Threshold"),
             position: "right",
-            fill: isDarkMode ? "#839496" : "#657b83",
+            fill: axisTextColor,
             fontSize: 11,
           }}
         />
@@ -1128,7 +1130,7 @@ function MetricBox({
     <div
       className={`${theme.bgMain} border ${theme.border} p-3 text-center`}
     >
-      <p className={`text-[11px] uppercase tracking-wider ${theme.textSub} mb-1`}>
+      <p className={`text-[11px] font-medium uppercase tracking-wider ${theme.textSub} mb-1`}>
         {label}
       </p>
       <p className={`text-xl font-bold ${theme.textHeading} tabular-nums`}>
@@ -1201,18 +1203,18 @@ function BatchGridCard({
             className="w-full h-full object-cover pointer-events-none"
           />
         ) : (
-          <Link2 className="w-6 h-6 text-white/40" />
+          <Link2 className="w-6 h-6 text-white/60" />
         )}
       </div>
 
-      <div className="absolute top-0 inset-x-0 px-2 py-1 bg-black/80 flex items-center justify-between gap-1">
-        <span className="text-[10px] text-white/90 truncate">{item.name}</span>
+      <div className="absolute top-0 inset-x-0 px-2 py-1 bg-black/85 flex items-center justify-between gap-1">
+        <span className="text-[10px] text-white/95 truncate">{item.name}</span>
         <span
           onClick={(e) => {
             e.stopPropagation();
             if (!disableRemove) onRemove();
           }}
-          className={`p-0.5 text-white/80 shrink-0 ${
+          className={`p-0.5 text-white/90 shrink-0 ${
             disableRemove ? "opacity-30 pointer-events-none" : "hover:opacity-70"
           }`}
         >
@@ -1221,8 +1223,8 @@ function BatchGridCard({
       </div>
 
       {item.status === "queued" && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/30">
-          <Clock className="w-6 h-6 text-white/70" />
+        <div className="absolute inset-0 flex items-center justify-center bg-black/35">
+          <Clock className="w-6 h-6 text-white/85" />
         </div>
       )}
 
@@ -1239,7 +1241,7 @@ function BatchGridCard({
       )}
 
       {item.status === "done" && classified && (
-        <div className="absolute bottom-0 inset-x-0 px-2 py-1 bg-black/75 flex items-center justify-between">
+        <div className="absolute bottom-0 inset-x-0 px-2 py-1 bg-black/80 flex items-center justify-between">
           <span
             className={`text-[10px] font-bold ${
               classified.isSynthetic ? "text-[#dc322f]" : "text-[#2aa198]"
@@ -1250,7 +1252,7 @@ function BatchGridCard({
           </span>
 
           {activeEntry && !activeEntry.error && (
-            <span className="text-[10px] text-white/70 tabular-nums">
+            <span className="text-[10px] text-white/85 tabular-nums">
               {activeEntry.processingTime !== undefined
                 ? `${activeEntry.processingTime.toFixed(1)}s`
                 : t("Backend không phản hồi", "Backend did not respond")}
@@ -1267,8 +1269,8 @@ function BatchGridCard({
       )}
 
       {missingResult && (
-        <div className="absolute bottom-0 inset-x-0 px-2 py-1 bg-black/75">
-          <span className="text-[10px] text-[#93a1a1]">
+        <div className="absolute bottom-0 inset-x-0 px-2 py-1 bg-black/80">
+          <span className="text-[10px] text-white/80">
             {t("Chưa có kết quả", "No result yet")}
           </span>
         </div>
@@ -1537,17 +1539,20 @@ function DashboardView({
   };
 
   const statusStyle: Record<BatchStatus, string> = {
-    queued: "text-[#93a1a1] border-[#93a1a1]/40",
-    processing: "text-[#268bd2] border-[#268bd2]/40",
-    done: "text-[#2aa198] border-[#2aa198]/40",
-    error: "text-[#dc322f] border-[#dc322f]/40",
+    queued: `${theme.textMain} border-[#839496]/60`,
+    processing: "text-[#268bd2] border-[#268bd2]/60",
+    done: "text-[#2aa198] border-[#2aa198]/60",
+    error: "text-[#dc322f] border-[#dc322f]/60",
   };
 
   return (
     <div className="relative">
-      <h1 className={`text-2xl font-semibold ${theme.textHeading} mb-4`}>
-        {t("Dashboard vận hành", "Operations dashboard")}
-      </h1>
+      <div className={`${theme.bgCard} border ${theme.border} px-4 py-3 mb-4 inline-flex items-center gap-2.5`}>
+        <Gauge className="w-5 h-5 text-[#268bd2]" />
+        <h1 className={`text-xl font-bold ${theme.textHeading}`}>
+          {t("Dashboard vận hành", "Operations dashboard")}
+        </h1>
+      </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
         <MetricBox
@@ -1599,12 +1604,14 @@ function DashboardView({
       </div>
 
       {(!metrics || metrics.auroc == null) && (
-        <p className={`text-[11px] ${theme.textSub} mb-4`}>
-          {t(
-            "AUROC và Accuracy cần file nhãn CSV, và AUROC cần có cả video Real lẫn AI trong tập đã chạy.",
-            "AUROC and Accuracy need a CSV label file, and AUROC needs both Real and AI videos among the processed ones."
-          )}
-        </p>
+        <div className={`${theme.bgCard} border ${theme.border} px-3.5 py-2 mb-4`}>
+          <p className={`text-xs ${theme.textMain}`}>
+            {t(
+              "AUROC và Accuracy cần file nhãn CSV, và AUROC cần có cả video Real lẫn AI trong tập đã chạy.",
+              "AUROC and Accuracy need a CSV label file, and AUROC needs both Real and AI videos among the processed ones."
+            )}
+          </p>
+        </div>
       )}
 
       <div
@@ -1688,7 +1695,7 @@ function DashboardView({
             onChange={(e) => setBatchUrlText(e.target.value)}
             placeholder={t("Dán link YouTube / TikTok / Facebook..., mỗi dòng 1 link", "Paste YouTube / TikTok / Facebook links, one per line")}
             rows={3}
-            className={`w-full px-3 py-2 border ${theme.border} ${theme.inputBg} ${theme.textHeading} text-xs outline-none focus:border-[#2aa198] mb-2`}
+            className={`w-full px-3 py-2 border ${theme.border} ${theme.inputBg} ${theme.textHeading} placeholder:opacity-75 text-xs outline-none focus:border-[#2aa198] mb-2`}
           />
 
           <div className="flex justify-end gap-2">
@@ -1716,7 +1723,7 @@ function DashboardView({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder={t("Tìm tên hoặc URL video...", "Search by video name or URL...")}
-          className={`flex-1 min-w-[200px] text-xs px-3 py-2 border ${theme.border} ${theme.inputBg} ${theme.textHeading} outline-none focus:border-[#2aa198]`}
+          className={`flex-1 min-w-[200px] text-xs px-3 py-2 border ${theme.border} ${theme.inputBg} ${theme.textHeading} placeholder:opacity-75 outline-none focus:border-[#2aa198]`}
         />
 
         <select
@@ -1784,7 +1791,7 @@ function DashboardView({
                 <tr>
                   <td
                     colSpan={6}
-                    className={`px-4 py-8 text-center ${theme.textSub}`}
+                    className={`px-4 py-8 text-center ${theme.textMain}`}
                   >
                     {t("Chưa có video nào khớp bộ lọc. Thêm video hoặc URL ở thanh công cụ phía trên.", "No video matches the filters. Add videos or URLs from the toolbar above.")}
                   </td>
@@ -1830,9 +1837,9 @@ function DashboardView({
                             className="w-full h-full object-cover pointer-events-none"
                           />
                         ) : it.sourceUrl ? (
-                          <Link2 className="w-3.5 h-3.5 text-[#93a1a1]" />
+                          <Link2 className={`w-3.5 h-3.5 ${theme.textSub}`} />
                         ) : (
-                          <Film className="w-3.5 h-3.5 text-[#93a1a1]" />
+                          <Film className={`w-3.5 h-3.5 ${theme.textSub}`} />
                         )}
                       </div>
                       <span className="truncate">{it.name}</span>
@@ -1840,7 +1847,7 @@ function DashboardView({
 
                     <td className="px-2 py-2">
                       <span
-                        className={`text-[10px] px-2 py-0.5 border ${statusStyle[it.status]}`}
+                        className={`text-[10px] font-medium px-2 py-0.5 border ${statusStyle[it.status]}`}
                       >
                         {statusLabel[it.status]}
                       </span>
@@ -2091,7 +2098,7 @@ export default function SyntheticVideoDetector() {
   const [showBatchUrlBox, setShowBatchUrlBox] = useState(false);
   const [batchUrlText, setBatchUrlText] = useState("");
 
-  const [labelMap, setLabelMap] = useState<Map<string, number>>(new Map());
+  const [labelMap, setLabelMap] = useState>(new Map());
   const [csvInfo, setCsvInfo] = useState<{
     fileName: string;
     totalRows: number;
@@ -2122,21 +2129,30 @@ export default function SyntheticVideoDetector() {
   const theme: Theme = {
     bgMain: isDarkMode ? "bg-[#0b3c4d]" : "bg-[#fdf6e3]",
     bgCard: isDarkMode ? "bg-[#073642]/95" : "bg-[#eee8d5]/95",
-    textMain: isDarkMode ? "text-[#93a1a1]" : "text-[#586e75]",
+    textMain: isDarkMode ? "text-[#d6e2e8]" : "text-[#33464d]",
     textHeading: isDarkMode ? "text-[#fdf6e3]" : "text-[#073642]",
-    textSub: isDarkMode ? "text-[#839496]" : "text-[#657b83]",
+    textSub: isDarkMode ? "text-[#b0c4ce]" : "text-[#475b63]",
     border: isDarkMode ? "border-[#1e5266]" : "border-[#d5ceb8]",
-    inputBg: isDarkMode ? "bg-[#052630]/85" : "bg-[#fdf6e3]",
+    inputBg: isDarkMode ? "bg-[#052630]/95" : "bg-[#fdf6e3]",
     btnCancel: isDarkMode
-      ? "bg-[#052630] hover:bg-[#194b57] text-[#93a1a1]"
-      : "bg-[#fdf6e3] hover:bg-[#e2dbc7] text-[#586e75]",
+      ? "bg-[#052630] hover:bg-[#194b57] text-[#d6e2e8]"
+      : "bg-[#fdf6e3] hover:bg-[#e2dbc7] text-[#33464d]",
   };
 
-  const tabBtn = (isActive: boolean) =>
-    `flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-all ${
+  // Nút chuyển tab chính (Video đơn / Xử lý hàng loạt): đóng khung nổi bật, có nền rõ ràng
+  const mainTabBtn = (isActive: boolean) =>
+    `flex items-center gap-2 px-5 py-2.5 text-sm border transition-all ${
       isActive
-        ? `border-[#268bd2] ${theme.textHeading} font-bold`
-        : `border-transparent ${theme.textSub} hover:opacity-80`
+        ? "bg-[#268bd2] border-[#268bd2] text-white font-bold shadow-sm"
+        : `${theme.bgMain} ${theme.border} ${theme.textHeading} font-semibold hover:border-[#268bd2]`
+    }`;
+
+  // Nút chuyển chế độ nguồn video (Tải file / Dán URL): đóng khung viền rõ ràng
+  const sourceTabBtn = (isActive: boolean) =>
+    `flex items-center gap-2 px-4 py-2 text-xs border transition-all ${
+      isActive
+        ? "bg-[#268bd2] border-[#268bd2] text-white font-bold"
+        : `${theme.bgMain} ${theme.border} ${theme.textHeading} font-medium hover:border-[#268bd2]`
     }`;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2513,7 +2529,7 @@ export default function SyntheticVideoDetector() {
               role="group"
               aria-label={t("Ngôn ngữ", "Language")}
             >
-              <Languages className="w-3.5 h-3.5 mx-1.5 opacity-70" />
+              <Languages className="w-3.5 h-3.5 mx-1.5 opacity-85" />
               {(["vi", "en"] as Lang[]).map((l) => (
                 <button
                   key={l}
@@ -2657,17 +2673,19 @@ export default function SyntheticVideoDetector() {
             )}
 
             <div
-              className={`flex items-center gap-2 mb-8 border-b ${theme.border}`}
+              className={`tech-panel inline-flex flex-wrap items-center gap-2 p-2 mb-8 ${theme.bgCard} border ${theme.border}`}
             >
               <button
-                className={tabBtn(activeTab === "single")}
+                type="button"
+                className={mainTabBtn(activeTab === "single")}
                 onClick={() => setActiveTab("single")}
               >
                 <Film className="w-4 h-4" /> {t("Video đơn", "Single video")}
               </button>
 
               <button
-                className={tabBtn(activeTab === "batch")}
+                type="button"
+                className={mainTabBtn(activeTab === "batch")}
                 onClick={() => setActiveTab("batch")}
               >
                 <Layers className="w-4 h-4" /> {t("Xử lý hàng loạt", "Batch processing")}
@@ -2699,15 +2717,17 @@ export default function SyntheticVideoDetector() {
 
                       <div className="flex items-center gap-2 mb-4">
                         <button
+                          type="button"
                           onClick={() => setSingleSourceMode("file")}
-                          className={tabBtn(singleSourceMode === "file")}
+                          className={sourceTabBtn(singleSourceMode === "file")}
                         >
                           <Upload className="w-3.5 h-3.5" /> {t("Tải file", "Upload file")}
                         </button>
 
                         <button
+                          type="button"
                           onClick={() => setSingleSourceMode("url")}
-                          className={tabBtn(singleSourceMode === "url")}
+                          className={sourceTabBtn(singleSourceMode === "url")}
                         >
                           <Link2 className="w-3.5 h-3.5" /> {t("Dán URL", "Paste URL")}
                         </button>
@@ -2718,13 +2738,13 @@ export default function SyntheticVideoDetector() {
                           <label
                             className={`border border-dashed ${theme.border} hover:border-[#2aa198] ${theme.inputBg} p-12 flex flex-col items-center justify-center cursor-pointer transition-colors group`}
                           >
-                            <Upload className="w-12 h-12 text-[#93a1a1] group-hover:text-[#2aa198] mb-4 transition-colors" />
+                            <Upload className={`w-12 h-12 ${theme.textSub} group-hover:text-[#2aa198] mb-4 transition-colors`} />
 
                             <p
                               className={`text-sm ${theme.textHeading} font-medium mb-1`}
                             >
                               {t("Kéo thả video vào đây hoặc", "Drag and drop video here or")}{" "}
-                              <span className="text-[#268bd2]">
+                              <span className="text-[#268bd2] font-semibold">
                                 {t("chọn file", "browse files")}
                               </span>
                             </p>
@@ -2800,7 +2820,7 @@ export default function SyntheticVideoDetector() {
                               setSingleUrlInput(e.target.value)
                             }
                             placeholder={t("Dán link YouTube / TikTok / Facebook...", "Paste a YouTube / TikTok / Facebook link...")}
-                            className={`w-full px-4 py-3 border ${theme.border} ${theme.inputBg} ${theme.textHeading} text-sm outline-none focus:border-[#2aa198]`}
+                            className={`w-full px-4 py-3 border ${theme.border} ${theme.inputBg} ${theme.textHeading} placeholder:opacity-75 text-sm outline-none focus:border-[#2aa198]`}
                           />
 
                           <div
@@ -2875,8 +2895,8 @@ export default function SyntheticVideoDetector() {
                             <div
                               className={`text-center py-16 ${theme.textMain}`}
                             >
-                              <Cpu className="w-12 h-12 mx-auto mb-3 opacity-40" />
-                              <p className="text-sm">
+                              <Cpu className="w-12 h-12 mx-auto mb-3 opacity-75 text-[#268bd2]" />
+                              <p className="text-sm font-medium">
                                 {t("Chưa có dữ liệu. Hãy tải video lên và chạy model.", "No data available. Please upload a video and run the model.")}
                               </p>
                             </div>
@@ -2904,7 +2924,7 @@ export default function SyntheticVideoDetector() {
 
                         {!isAnalyzing && singleEntry?.error && (
                           <div className="text-center py-16 text-[#dc322f]">
-                            <X className="w-12 h-12 mx-auto mb-3 opacity-60" />
+                            <X className="w-12 h-12 mx-auto mb-3 opacity-80" />
                             <p className="text-sm">
                               {t("Lỗi:", "Error:")} {singleEntry.error}
                             </p>
@@ -3064,7 +3084,7 @@ export default function SyntheticVideoDetector() {
                           t("Dán link YouTube / TikTok / Facebook..., mỗi dòng 1 link", "Paste YouTube / TikTok / Facebook links, one per line")
                         }
                         rows={3}
-                        className={`w-full px-3 py-2 border ${theme.border} ${theme.inputBg} ${theme.textHeading} text-xs outline-none focus:border-[#2aa198] mb-2`}
+                        className={`w-full px-3 py-2 border ${theme.border} ${theme.inputBg} ${theme.textHeading} placeholder:opacity-75 text-xs outline-none focus:border-[#2aa198] mb-2`}
                       />
 
                       <div className="flex justify-end gap-2">
@@ -3121,13 +3141,13 @@ export default function SyntheticVideoDetector() {
                     <label
                       className={`border border-dashed ${theme.border} hover:border-[#2aa198] ${theme.inputBg} p-12 flex flex-col items-center justify-center cursor-pointer transition-colors group`}
                     >
-                      <Upload className="w-12 h-12 text-[#93a1a1] group-hover:text-[#2aa198] mb-4 transition-colors" />
+                      <Upload className={`w-12 h-12 ${theme.textSub} group-hover:text-[#2aa198] mb-4 transition-colors`} />
 
                       <p
                         className={`text-sm ${theme.textHeading} font-medium mb-1`}
                       >
                         {t("Kéo thả nhiều video vào đây hoặc", "Drag & drop multiple videos here or")}{" "}
-                        <span className="text-[#268bd2]">{t("chọn nhiều file", "select multiple files")}</span>
+                        <span className="text-[#268bd2] font-semibold">{t("chọn nhiều file", "select multiple files")}</span>
                       </p>
 
                       <p className={`text-xs ${theme.textMain}`}>
@@ -3240,8 +3260,8 @@ export default function SyntheticVideoDetector() {
                           <div
                             className={`text-center py-16 ${theme.textMain}`}
                           >
-                            <Clock className="w-12 h-12 mx-auto mb-3 opacity-40" />
-                            <p className="text-sm">
+                            <Clock className="w-12 h-12 mx-auto mb-3 opacity-75 text-[#268bd2]" />
+                            <p className="text-sm font-medium">
                               {t("Video đang chờ trong hàng đợi.", "This video is waiting in the queue.")}
                             </p>
                           </div>
@@ -3269,7 +3289,7 @@ export default function SyntheticVideoDetector() {
 
                         {selectedBatchItem.status === "error" && (
                           <div className="text-center py-16 text-[#dc322f]">
-                            <X className="w-12 h-12 mx-auto mb-3 opacity-60" />
+                            <X className="w-12 h-12 mx-auto mb-3 opacity-80" />
                             <p className="text-sm">
                               {t("Xử lý thất bại:", "Processing failed:")} {selectedBatchItem.error}
                             </p>
@@ -3279,7 +3299,7 @@ export default function SyntheticVideoDetector() {
                         {selectedBatchItem.status === "done" &&
                           activeBatchEntry?.error && (
                             <div className="text-center py-16 text-[#dc322f]">
-                              <X className="w-12 h-12 mx-auto mb-3 opacity-60" />
+                              <X className="w-12 h-12 mx-auto mb-3 opacity-80" />
                               <p className="text-sm">
                                 {t("Lỗi:", "Error:")} {activeBatchEntry.error}
                               </p>

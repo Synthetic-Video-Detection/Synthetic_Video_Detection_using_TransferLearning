@@ -209,36 +209,11 @@ type AnalysisResult = {
 
 type BatchStatus = "queued" | "processing" | "done" | "error";
 
-type TimingRow = {
-  run: number | null;
-  scope: string; // "single_shot" | "window"
-  windowIdx: number | null;
-  timeSec: number | null; // tâm cửa sổ (giây trong video)
-  steps: Record<string, number>; // giây
-  gpuMemPeakMb: number | null; // GPU peak (đến cửa sổ này)
-  cpuRssMb: number | null; // RAM tiến trình sau cửa sổ
-};
-
-type TimingInfo = {
-  videoDurationSec: number | null;
-  videoInfo: Record<string, number | string | null>;
-  nWindows: number;
-  repeats: number;
-  runTimes: number[];
-  runSummaries: Record<string, number>[];
-  resources: Record<string, number | null>; // trung vị qua các lần chạy
-  runResources: Record<string, number | null>[];
-  totalSec: number | null;
-  summary: Record<string, number>;
-  rows: TimingRow[];
-};
-
 type VideoResult = {
   result: AnalysisResult;
   scores: ScorePoint[];
   error?: string;
   processingTime?: number; // giây: thời gian model xử lý xong video này
-  timing?: TimingInfo; // thời gian chi tiết từng bước do backend đo
 };
 
 type BatchItem = {
@@ -293,36 +268,6 @@ function LiveTimer({ className = "" }: { className?: string }) {
   return <span className={`tabular-nums ${className}`}>{formatDuration(elapsed)}</span>;
 }
 
-function parseTiming(raw: any): TimingInfo | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
-  const num = (v: any) => (typeof v === "number" && Number.isFinite(v) ? v : null);
-
-  return {
-    videoDurationSec: num(raw.video_duration_sec),
-    videoInfo:
-      raw.video_info && typeof raw.video_info === "object" ? raw.video_info : {},
-    nWindows: Number(raw.n_windows) || 0,
-    repeats: Number(raw.repeats) || 1,
-    runTimes: Array.isArray(raw.run_times_sec) ? raw.run_times_sec.map(Number) : [],
-    runSummaries: Array.isArray(raw.run_summaries) ? raw.run_summaries : [],
-    resources: raw.resources && typeof raw.resources === "object" ? raw.resources : {},
-    runResources: Array.isArray(raw.run_resources) ? raw.run_resources : [],
-    totalSec: num(raw.total_sec),
-    summary: raw.summary && typeof raw.summary === "object" ? raw.summary : {},
-    rows: Array.isArray(raw.rows)
-      ? raw.rows.map((row: any) => ({
-          run: num(row.run),
-          scope: String(row.scope ?? ""),
-          windowIdx: num(row.window_idx),
-          timeSec: num(row.time),
-          steps: row.steps && typeof row.steps === "object" ? row.steps : {},
-          gpuMemPeakMb: num(row.gpu_mem_peak_mb),
-          cpuRssMb: num(row.cpu_rss_mb),
-        }))
-      : [],
-  };
-}
-
 // Backend trả về 1 object phẳng: {label, probability_ai, confidence, scores}.
 function parseBackendResult(r: any): VideoResult {
   if (!r || r.error) {
@@ -343,7 +288,6 @@ function parseBackendResult(r: any): VideoResult {
       typeof r.processing_time_sec === "number"
         ? r.processing_time_sec
         : undefined,
-    timing: parseTiming(r.timing),
     scores: Array.isArray(r.scores)
       ? r.scores.map((p: any) => ({
           time: Number(p.time),
@@ -358,15 +302,13 @@ const MAX_POLL_FAILURES = 60; // ~2 phút mất kết nối liên tục mới co
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// Backend chạy dạng job: POST trả job_id ngay, sau đó poll /jobs/{id}. Nhờ vậy một
-// video chạy lặp nhiều lần (hàng chục phút) không bị ngrok/trình duyệt cắt giữa chừng.
+// Backend chạy dạng job: POST trả job_id ngay, sau đó poll /jobs/{id}. Nhờ vậy request
+// không bị ngrok/trình duyệt cắt giữa chừng khi video xử lý lâu.
 async function postToBackend(
   path: string,
-  formData: FormData,
-  repeats: number
+  formData: FormData
 ): Promise<VideoResult> {
   const headers = { "ngrok-skip-browser-warning": "true" };
-  formData.append("repeats", String(repeats));
 
   const submit = await fetch("https://derived-expanse-roundish.ngrok-free.dev" + path, {
     method: "POST",
@@ -417,16 +359,16 @@ async function postToBackend(
   }
 }
 
-async function analyzeVideoFile(file: File, repeats = 1): Promise<VideoResult> {
+async function analyzeVideoFile(file: File): Promise<VideoResult> {
   const formData = new FormData();
   formData.append("file", file);
-  return postToBackend("/upload/", formData, repeats);
+  return postToBackend("/upload/", formData);
 }
 
-async function analyzeVideoUrl(url: string, repeats = 1): Promise<VideoResult> {
+async function analyzeVideoUrl(url: string): Promise<VideoResult> {
   const formData = new FormData();
   formData.append("url", url);
-  return postToBackend("/upload_url/", formData, repeats);
+  return postToBackend("/upload_url/", formData);
 }
 
 function stringSeed(str: string): number {
@@ -773,233 +715,6 @@ function downloadResultsCsv(
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
-}
-
-// Thứ tự cột các bước đo thời gian (khớp với tên bước backend ghi vào "timing").
-const TIMING_STEP_COLUMNS = [
-  "open_video",
-  "read_frames",
-  "clip_embed",
-  "fft_residual",
-  "dinov2_forward",
-  "concat_features",
-  "scale",
-  "bilstm",
-  "step_total",
-];
-
-const RESOURCE_COLUMNS = [
-  "gpu_mem_baseline_mb",
-  "gpu_mem_peak_mb",
-  "gpu_mem_reserved_peak_mb",
-  "cpu_rss_baseline_mb",
-  "cpu_rss_peak_mb",
-  "cpu_percent_avg",
-  "cpu_percent_peak",
-  "gpu_util_avg_pct",
-  "gpu_util_peak_pct",
-];
-
-type TimingEntry = { name: string; result?: VideoResult };
-
-const fmtNum = (v: number | null | undefined, digits = 4) =>
-  v === null || v === undefined || !Number.isFinite(v) ? "" : v.toFixed(digits);
-
-const median = (xs: number[]) => {
-  if (xs.length === 0) return null;
-  const s = [...xs].sort((a, b) => a - b);
-  const m = Math.floor(s.length / 2);
-  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
-};
-
-function videoInfoCells(tm: TimingInfo): string[] {
-  const vi = tm.videoInfo;
-  const g = (k: string) =>
-    vi[k] === null || vi[k] === undefined ? "" : String(vi[k]);
-  const resolution = vi.width && vi.height ? `${vi.width}x${vi.height}` : "";
-
-  return [
-    fmtNum(tm.videoDurationSec),
-    g("width"),
-    g("height"),
-    resolution,
-    g("fps"),
-    g("total_frames"),
-    g("file_size_mb"),
-    g("bitrate_kbps"),
-    escapeCsvField(g("codec")),
-  ];
-}
-
-const VIDEO_INFO_HEADER = [
-  "video_duration_sec",
-  "width",
-  "height",
-  "resolution",
-  "fps",
-  "total_frames",
-  "file_size_mb",
-  "bitrate_kbps",
-  "codec",
-];
-
-// File 1: tổng hợp, mỗi video 1 dòng (trung vị, min, max, tài nguyên...)
-function buildTimingSummaryCsv(entries: TimingEntry[]): string {
-  const header = [
-    "video",
-    ...VIDEO_INFO_HEADER,
-    "n_windows",
-    "repeats",
-    "processing_time_median_sec",
-    "processing_time_min_sec",
-    "processing_time_max_sec",
-    "processing_time_mean_sec",
-    "run_times_sec",
-    "realtime_factor",
-    "ms_per_window_median",
-    ...TIMING_STEP_COLUMNS.map((s) => `${s}_median_sec`),
-    ...RESOURCE_COLUMNS,
-  ];
-
-  const lines: string[] = [];
-
-  entries.forEach(({ name, result }) => {
-    const tm = result?.timing;
-    if (!result || result.error || !tm) return;
-
-    const runs = tm.runTimes.length > 0 ? tm.runTimes : [];
-    const med = result.processingTime ?? median(runs);
-    const mean = runs.length ? runs.reduce((a, b) => a + b, 0) / runs.length : null;
-    const rtf =
-      med !== null && med !== undefined && tm.videoDurationSec
-        ? med / tm.videoDurationSec
-        : null;
-    const msPerWindow =
-      med !== null && med !== undefined && tm.nWindows > 0
-        ? (med / tm.nWindows) * 1000
-        : null;
-
-    lines.push(
-      [
-        escapeCsvField(name),
-        ...videoInfoCells(tm),
-        String(tm.nWindows),
-        String(tm.repeats),
-        fmtNum(med, 2),
-        fmtNum(runs.length ? Math.min(...runs) : null, 2),
-        fmtNum(runs.length ? Math.max(...runs) : null, 2),
-        fmtNum(mean, 2),
-        runs.map((x) => x.toFixed(2)).join(";"),
-        fmtNum(rtf, 3),
-        fmtNum(msPerWindow, 1),
-        ...TIMING_STEP_COLUMNS.map((s) => fmtNum(tm.summary[s])),
-        ...RESOURCE_COLUMNS.map((k) => fmtNum(tm.resources[k], 2)),
-      ].join(",")
-    );
-  });
-
-  return [header.join(","), ...lines].join("\r\n");
-}
-
-// File 2: chi tiết từng run x từng window (+ dòng run_total cho mỗi lần chạy)
-function buildTimingDetailCsv(entries: TimingEntry[]): string {
-  const header = [
-    "video",
-    "run",
-    "scope",
-    "window_idx",
-    "window_center_sec",
-    ...TIMING_STEP_COLUMNS.map((s) => `${s}_sec`),
-    "gpu_mem_peak_mb",
-    "cpu_rss_mb",
-    "gpu_mem_reserved_peak_mb",
-    "cpu_rss_peak_mb",
-    "cpu_percent_avg",
-    "cpu_percent_peak",
-    "gpu_util_avg_pct",
-    "gpu_util_peak_pct",
-    "resolution",
-    "video_duration_sec",
-  ];
-
-  const lines: string[] = [];
-
-  entries.forEach(({ name, result }) => {
-    const tm = result?.timing;
-    if (!result || result.error || !tm) return;
-
-    const info = videoInfoCells(tm);
-    const tail = [info[3], info[0]]; // resolution, video_duration_sec
-    const blank5 = ["", "", "", "", ""];
-
-    tm.rows.forEach((row) => {
-      lines.push(
-        [
-          escapeCsvField(name),
-          row.run === null ? "" : String(row.run),
-          row.scope,
-          row.windowIdx === null ? "" : String(row.windowIdx),
-          fmtNum(row.timeSec),
-          ...TIMING_STEP_COLUMNS.map((s) => fmtNum(row.steps[s])),
-          fmtNum(row.gpuMemPeakMb, 2), // peak tích lũy đến hết cửa sổ này
-          fmtNum(row.cpuRssMb, 2),
-          ...blank5,
-          "",
-          ...tail,
-        ].join(",")
-      );
-    });
-
-    tm.runSummaries.forEach((sum, i) => {
-      const rs = tm.runResources[i] ?? {};
-      lines.push(
-        [
-          escapeCsvField(name),
-          String(i + 1),
-          "run_total",
-          "",
-          "",
-          ...TIMING_STEP_COLUMNS.map((s) => fmtNum(sum[s])),
-          fmtNum(rs.gpu_mem_peak_mb, 2),
-          fmtNum(rs.cpu_rss_peak_mb, 2),
-          fmtNum(rs.gpu_mem_reserved_peak_mb, 2),
-          fmtNum(rs.cpu_rss_peak_mb, 2),
-          fmtNum(rs.cpu_percent_avg, 2),
-          fmtNum(rs.cpu_percent_peak, 2),
-          fmtNum(rs.gpu_util_avg_pct, 2),
-          fmtNum(rs.gpu_util_peak_pct, 2),
-          ...tail,
-        ].join(",")
-      );
-    });
-  });
-
-  return [header.join(","), ...lines].join("\r\n");
-}
-
-function saveCsv(content: string, filename: string) {
-  const blob = new Blob(["\uFEFF" + content], {
-    type: "text/csv;charset=utf-8;",
-  });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-
-  a.href = url;
-  a.download = filename;
-
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-
-// Một lần bấm -> tải 2 file: tổng hợp + chi tiết.
-function downloadTimingCsv(entries: TimingEntry[]) {
-  saveCsv(buildTimingSummaryCsv(entries), "thoi_gian_tong_hop.csv");
-  setTimeout(
-    () => saveCsv(buildTimingDetailCsv(entries), "thoi_gian_chi_tiet.csv"),
-    400
-  );
 }
 
 type Theme = {
@@ -1524,8 +1239,6 @@ function DashboardView({
   setMockMode,
   threshold,
   setThreshold,
-  repeats,
-  setRepeats,
   batchItems,
   labelMap,
   metrics,
@@ -1562,8 +1275,6 @@ function DashboardView({
   setMockMode: (v: boolean) => void;
   threshold: number;
   setThreshold: (v: number) => void;
-  repeats: number;
-  setRepeats: (v: number) => void;
   batchItems: BatchItem[];
   labelMap: Map<string, number>;
   metrics: ReturnType<typeof computeMetrics>;
@@ -1704,23 +1415,6 @@ function DashboardView({
           </div>
         </div>
 
-        <label className="flex items-center gap-2 shrink-0 text-xs">
-          <span className={`font-bold ${theme.textHeading}`}>
-            {t("Số lần chạy / video (lấy trung vị thời gian)", "Runs per video (median time)")}
-          </span>
-          <input
-            type="number"
-            min={1}
-            max={10}
-            value={repeats}
-            onChange={(e) =>
-              setRepeats(Math.max(1, Math.min(10, Math.floor(Number(e.target.value)) || 1)))
-            }
-            style={{ colorScheme: isDarkMode ? "dark" : "light" }}
-            className={`w-14 px-2 py-1 border ${theme.border} bg-transparent ${theme.textHeading} outline-none`}
-          />
-        </label>
-
         <label className="flex items-center gap-2 cursor-pointer shrink-0 text-xs">
           <input
             type="checkbox"
@@ -1836,13 +1530,6 @@ function DashboardView({
           className={`text-xs px-3 py-2 border ${theme.border} ${theme.btnCancel} flex items-center gap-1.5`}
         >
           <Download className="w-3.5 h-3.5" /> {t("Xuất CSV", "Export CSV")}
-        </button>
-
-        <button
-          onClick={() => downloadTimingCsv(batchItems)}
-          className={`text-xs px-3 py-2 border ${theme.border} ${theme.btnCancel} flex items-center gap-1.5`}
-        >
-          <Download className="w-3.5 h-3.5" /> {t("CSV thời gian (2 file)", "Timing CSV (2 files)")}
         </button>
 
         <button
@@ -2252,7 +1939,6 @@ export default function SyntheticVideoDetector() {
   }, []);
   const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD);
   const [mockMode, setMockMode] = useState(false);
-  const [repeats, setRepeats] = useState(1);
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [singleSourceMode, setSingleSourceMode] = useState<"file" | "url">(
@@ -2344,8 +2030,8 @@ export default function SyntheticVideoDetector() {
       const entry = mockMode
         ? await generateMockResult(isUrlMode ? trimmedUrl : selectedFile!.name)
         : isUrlMode
-        ? await analyzeVideoUrl(trimmedUrl, repeats)
-        : await analyzeVideoFile(selectedFile!, repeats);
+        ? await analyzeVideoUrl(trimmedUrl)
+        : await analyzeVideoFile(selectedFile!);
 
       setSingleEntry(entry);
     } catch (error) {
@@ -2482,8 +2168,8 @@ export default function SyntheticVideoDetector() {
       const entry = mockMode
         ? await generateMockResult(item.name, labelMap.get(item.name))
         : item.file
-        ? await analyzeVideoFile(item.file, repeats)
-        : await analyzeVideoUrl(item.sourceUrl as string, repeats);
+        ? await analyzeVideoFile(item.file)
+        : await analyzeVideoUrl(item.sourceUrl as string);
 
       setBatchItems((prev) =>
         prev.map((it) =>
@@ -2721,13 +2407,6 @@ export default function SyntheticVideoDetector() {
                     >
                       <Download className="w-3.5 h-3.5" /> {t("Xuất CSV", "Export CSV")}
                     </button>
-
-                    <button
-                      onClick={() => downloadTimingCsv(batchItems)}
-                      className={`text-xs px-3 py-1.5 border ${theme.border} ${theme.btnCancel} flex items-center gap-1.5`}
-                    >
-                      <Download className="w-3.5 h-3.5" /> {t("CSV thời gian (2 file)", "Timing CSV (2 files)")}
-                    </button>
                   </div>
                 </div>
 
@@ -2856,28 +2535,6 @@ export default function SyntheticVideoDetector() {
                   </p>
                 </div>
               </div>
-
-              <label className="flex items-start gap-2 shrink-0 max-w-xs">
-                <span>
-                  <span className={`text-xs font-bold ${theme.textHeading} block`}>
-                    {t("Số lần chạy / video", "Runs per video")}
-                  </span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={10}
-                    value={repeats}
-                    onChange={(e) =>
-                      setRepeats(Math.max(1, Math.min(10, Math.floor(Number(e.target.value)) || 1)))
-                    }
-                    style={{ colorScheme: isDarkMode ? "dark" : "light" }}
-                    className={`w-16 mt-1 px-2 py-1 text-xs border ${theme.border} bg-transparent ${theme.textHeading} outline-none`}
-                  />
-                  <span className={`text-[11px] ${theme.textSub} block mt-0.5`}>
-                    {t("Chạy lặp, thời gian hiển thị và trong CSV là trung vị (GPU Colab dao động).", "Repeat each video; shown and exported time is the median (Colab GPU fluctuates).")}
-                  </span>
-                </span>
-              </label>
 
               <label className="flex items-start gap-2 cursor-pointer shrink-0 max-w-xs">
                 <input
@@ -3159,26 +2816,6 @@ export default function SyntheticVideoDetector() {
                             processingTime={singleEntry?.processingTime}
                           />
                         )}
-
-                        {!isAnalyzing && singleEntry?.timing && (
-                          <button
-                            onClick={() =>
-                              downloadTimingCsv([
-                                {
-                                  name:
-                                    singleSourceMode === "url"
-                                      ? singleUrlInput.trim()
-                                      : selectedFile?.name ?? "video",
-                                  result: singleEntry,
-                                },
-                              ])
-                            }
-                            className={`mt-3 text-xs px-3 py-2 border ${theme.border} ${theme.btnCancel} flex items-center gap-1.5`}
-                          >
-                            <Download className="w-3.5 h-3.5" />{" "}
-                            {t("Xuất CSV thời gian (2 file)", "Export timing CSV (2 files)")}
-                          </button>
-                        )}
                       </div>
                     </div>
                   </div>
@@ -3292,14 +2929,6 @@ export default function SyntheticVideoDetector() {
                         className={`text-xs px-3 py-2 border ${theme.border} ${theme.btnCancel} flex items-center gap-2 transition-colors disabled:opacity-40`}
                       >
                         <Download className="w-3.5 h-3.5" /> {t("Xuất CSV", "Export CSV")}
-                      </button>
-
-                      <button
-                        onClick={() => downloadTimingCsv(batchItems)}
-                        disabled={doneCount === 0}
-                        className={`text-xs px-3 py-2 border ${theme.border} ${theme.btnCancel} flex items-center gap-2 transition-colors disabled:opacity-40`}
-                      >
-                        <Download className="w-3.5 h-3.5" /> {t("CSV thời gian (2 file)", "Timing CSV (2 files)")}
                       </button>
 
                       <button
@@ -3610,8 +3239,6 @@ export default function SyntheticVideoDetector() {
             setMockMode={setMockMode}
             threshold={threshold}
             setThreshold={setThreshold}
-            repeats={repeats}
-            setRepeats={setRepeats}
             batchItems={batchItems}
             labelMap={labelMap}
             metrics={metrics}

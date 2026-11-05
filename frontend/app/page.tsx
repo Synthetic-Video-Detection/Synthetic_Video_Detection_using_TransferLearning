@@ -170,7 +170,7 @@ function DotGlowBackground({
               const alpha = Math.min(intensity * glowStrength, 1);
               ctx.beginPath();
               ctx.globalAlpha = alpha;
-              ctx.arc(px, py, dotSize * (0.6 + intensity), 0, Math.PI * 2);
+              ctx.arc(px, py, dotSize * (0.6 + Math.min(intensity, 1)), 0, Math.PI * 2);
               ctx.fill();
             }
           }
@@ -2261,7 +2261,13 @@ export default function SyntheticVideoDetector() {
       <title>Varuna - Diffusion Detection</title>
       <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='52 43 920 920'%3E%3Cpath fill='%23268bd2' fill-rule='evenodd' d='M 512 111 L 934 895 L 90 895 Z M 512 461 L 370 728 L 654 728 Z'/%3E%3C/svg%3E" />
       <style>{INTEGRITY_CSS}</style>
-      <DotGlowBackground isDarkMode={isDarkMode} />
+      <DotGlowBackground
+        isDarkMode={isDarkMode}
+        dotColor={isDarkMode ? "#3a8fb0" : "#7db8de"}
+        glowStrength={0.55}
+        dotSize={2}
+        speed={0.6}
+      />
 
       <header
         className={`app-header border-b ${theme.border} ${theme.bgCard} sticky top-0 z-50 transition-colors duration-500`}

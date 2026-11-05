@@ -2264,9 +2264,9 @@ export default function SyntheticVideoDetector() {
       <DotGlowBackground
         isDarkMode={isDarkMode}
         dotColor={isDarkMode ? "#3a8fb0" : "#7db8de"}
-        glowStrength={0.55}
-        dotSize={2}
-        speed={0.6}
+        glowStrength={1.0}
+        dotSize={2.2}
+        speed={0.8}
       />
 
       <header

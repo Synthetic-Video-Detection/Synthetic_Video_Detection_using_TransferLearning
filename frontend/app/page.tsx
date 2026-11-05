@@ -2152,6 +2152,9 @@ export default function SyntheticVideoDetector() {
 
     if (isUrlMode ? !trimmedUrl : !selectedFile) return;
 
+    // Bắt đầu chạy ở giao diện này -> hủy lượt hàng loạt đang chạy ở giao diện khác.
+    if (isBatchRunning) cancelBatch();
+
     const controller = new AbortController();
     singleAbortRef.current = controller;
 
@@ -2361,6 +2364,9 @@ export default function SyntheticVideoDetector() {
     );
 
     if (queue.length === 0) return;
+
+    // Bắt đầu chạy hàng loạt -> hủy video đơn đang chạy ở giao diện khác.
+    if (singleAbortRef.current) cancelSingleAnalyze();
 
     batchCancelledRef.current = false;
     setIsBatchRunning(true);

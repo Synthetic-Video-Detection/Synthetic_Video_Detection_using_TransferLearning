@@ -215,6 +215,7 @@ type VideoResult = {
   scores: ScorePoint[];
   error?: string;
   processingTime?: number; // giây: thời gian model xử lý xong video này
+  previewUrl?: string; // blob URL của video tải từ backend (cho chế độ URL)
 };
 
 type BatchItem = {
@@ -223,6 +224,8 @@ type BatchItem = {
   file?: File;
   sourceUrl?: string;
   previewUrl?: string;
+  thumbnailUrl?: string;
+  videoTitle?: string;
   status: BatchStatus;
   result?: VideoResult;
   error?: string;
@@ -326,10 +329,30 @@ const sleep = (ms: number, signal?: AbortSignal) =>
 
 // Backend chạy dạng job: POST trả job_id ngay, sau đó poll /jobs/{id}. Nhờ vậy request
 // không bị ngrok/trình duyệt cắt giữa chừng khi video xử lý lâu.
+async function fetchJobVideoBlobUrl(
+  jobId: string,
+  headers: Record<string, string>,
+  signal?: AbortSignal
+): Promise<string | undefined> {
+  try {
+    const res = await fetch(
+      "https://derived-expanse-roundish.ngrok-free.dev/jobs/" + jobId + "/video",
+      { headers, signal }
+    );
+    if (!res.ok) return undefined;
+    const blob = await res.blob();
+    if (!blob || blob.size === 0) return undefined;
+    return URL.createObjectURL(blob);
+  } catch {
+    return undefined;
+  }
+}
+
 async function postToBackend(
   path: string,
   formData: FormData,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onVideoReady?: (blobUrl: string) => void
 ): Promise<VideoResult> {
   const headers = { "ngrok-skip-browser-warning": "true" };
 
@@ -368,6 +391,7 @@ async function postToBackend(
   // Chỉ dùng thời gian do backend đo; không tự tính phía trình duyệt
   // (sẽ lẫn thời gian upload/mạng). Thiếu -> hiển thị "Backend không phản hồi".
   let failures = 0;
+  let fetchedVideoBlobUrl: string | undefined;
 
   while (true) {
     await sleep(POLL_INTERVAL_MS, signal);
@@ -393,7 +417,27 @@ async function postToBackend(
     }
 
     if (body.status === "cancelled") throw abortError();
-    if (body.status === "done") return parseBackendResult(body.result);
+
+    if (body.has_video && !fetchedVideoBlobUrl) {
+      const blobUrl = await fetchJobVideoBlobUrl(job_id, headers, signal);
+      if (blobUrl) {
+        fetchedVideoBlobUrl = blobUrl;
+        onVideoReady?.(blobUrl);
+      }
+    }
+
+    if (body.status === "done") {
+      if (!fetchedVideoBlobUrl && path === "/upload_url/") {
+        const blobUrl = await fetchJobVideoBlobUrl(job_id, headers, signal);
+        if (blobUrl) {
+          fetchedVideoBlobUrl = blobUrl;
+          onVideoReady?.(blobUrl);
+        }
+      }
+      const parsed = parseBackendResult(body.result);
+      if (fetchedVideoBlobUrl) parsed.previewUrl = fetchedVideoBlobUrl;
+      return parsed;
+    }
     if (body.status === "error") throw new Error(body.error ?? "Backend báo lỗi.");
   }
 }
@@ -419,11 +463,257 @@ async function analyzeVideoFile(
 
 async function analyzeVideoUrl(
   url: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onVideoReady?: (blobUrl: string) => void
 ): Promise<VideoResult> {
   const formData = new FormData();
   formData.append("url", url);
-  return postToBackend("/upload_url/", formData, signal);
+  return postToBackend("/upload_url/", formData, signal, onVideoReady);
+}
+
+// Nhận diện YouTube ID, TikTok ID và lấy thumbnail/tiêu đề qua oEmbed để hiển thị ngay khi dán URL.
+function extractYouTubeId(url: string): string | null {
+  const m = url.match(
+    /(?:youtube\.com\/(?:watch\?.*v=|shorts\/|embed\/|live\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/i
+  );
+  return m ? m[1] : null;
+}
+
+function extractTikTokId(url: string): string | null {
+  const m = url.match(/tiktok\.com\/.*\/video\/(\d+)/i);
+  return m ? m[1] : null;
+}
+
+function isDirectVideoUrl(url: string): boolean {
+  return /\.(mp4|webm|mov|m4v|ogg)(\?|#|$)/i.test(url);
+}
+
+type UrlPreviewMeta = {
+  thumbnailUrl?: string;
+  title?: string;
+  author?: string;
+  tiktokId?: string;
+  youtubeId?: string;
+};
+
+async function fetchUrlPreviewMeta(rawUrl: string): Promise<UrlPreviewMeta> {
+  const url = extractCleanUrl(rawUrl);
+  const youtubeId = extractYouTubeId(url) ?? undefined;
+  const tiktokId = extractTikTokId(url) ?? undefined;
+  const meta: UrlPreviewMeta = { youtubeId, tiktokId };
+
+  if (youtubeId) {
+    meta.thumbnailUrl = `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg`;
+  }
+
+  try {
+    if (/tiktok\.com/i.test(url)) {
+      const res = await fetch(
+        `https://www.tiktok.com/oembed?url=${encodeURIComponent(url)}`
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (data.thumbnail_url) meta.thumbnailUrl = data.thumbnail_url;
+        if (data.title) meta.title = data.title;
+        if (data.author_name) meta.author = data.author_name;
+        if (data.embed_product_id && !meta.tiktokId) {
+          meta.tiktokId = String(data.embed_product_id);
+        }
+        return meta;
+      }
+    }
+
+    const res = await fetch(
+      `https://noembed.com/embed?url=${encodeURIComponent(url)}`
+    );
+    if (res.ok) {
+      const data = await res.json();
+      if (data.thumbnail_url && !meta.thumbnailUrl) {
+        meta.thumbnailUrl = data.thumbnail_url;
+      }
+      if (data.title) meta.title = data.title;
+      if (data.author_name) meta.author = data.author_name;
+    }
+  } catch {}
+
+  return meta;
+}
+
+function UrlPreviewBox({
+  url,
+  theme,
+}: {
+  url: string;
+  theme: Theme;
+}) {
+  const cleaned = extractCleanUrl(url);
+  const [meta, setMeta] = useState<UrlPreviewMeta | null>(null);
+  const [showEmbed, setShowEmbed] = useState(false);
+
+  useEffect(() => {
+    setShowEmbed(false);
+    if (!cleaned || !/^https?:\/\//i.test(cleaned)) {
+      setMeta(null);
+      return;
+    }
+    let cancelled = false;
+    fetchUrlPreviewMeta(cleaned).then((m) => {
+      if (!cancelled) setMeta(m);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [cleaned]);
+
+  if (!cleaned) {
+    return (
+      <div
+        className={`aspect-video ${theme.bgMain} border ${theme.border} flex flex-col items-center justify-center gap-2 px-6 text-center`}
+      >
+        <Link2 className={`w-8 h-8 ${theme.textSub}`} />
+        <p className={`text-xs ${theme.textMain}`}>
+          {t(
+            "Dán link YouTube, TikTok, Facebook... vào ô phía trên để xem trước và chạy pipeline AI.",
+            "Paste a YouTube, TikTok, or Facebook link above to preview and run the AI pipeline."
+          )}
+        </p>
+      </div>
+    );
+  }
+
+  if (isDirectVideoUrl(cleaned)) {
+    return (
+      <div
+        className={`relative aspect-video ${theme.bgMain} border ${theme.border} overflow-hidden flex items-center justify-center`}
+      >
+        <video
+          src={cleaned}
+          controls
+          preload="metadata"
+          className="w-full h-full object-contain"
+        />
+      </div>
+    );
+  }
+
+  const ytId = meta?.youtubeId ?? extractYouTubeId(cleaned);
+  const ttId = meta?.tiktokId ?? extractTikTokId(cleaned);
+
+  if (showEmbed && ytId) {
+    return (
+      <div
+        className={`relative aspect-video ${theme.bgMain} border ${theme.border} overflow-hidden`}
+      >
+        <iframe
+          src={`https://www.youtube.com/embed/${ytId}?autoplay=1&playsinline=1&rel=0`}
+          title={meta?.title ?? "YouTube video"}
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          referrerPolicy="strict-origin-when-cross-origin"
+          allowFullScreen
+          className="w-full h-full border-0"
+        />
+        <button
+          type="button"
+          onClick={() => setShowEmbed(false)}
+          className="absolute top-2 right-2 z-10 px-2.5 py-1 text-[11px] font-semibold bg-black/80 text-white border border-white/20 hover:bg-black"
+        >
+          {t("Đóng trình phát nhúng", "Close embed")}
+        </button>
+      </div>
+    );
+  }
+
+  if (showEmbed && ttId) {
+    return (
+      <div
+        className={`relative aspect-video ${theme.bgMain} border ${theme.border} overflow-hidden`}
+      >
+        <iframe
+          src={`https://www.tiktok.com/player/v1/${ttId}?music_info=1&description=1`}
+          title={meta?.title ?? "TikTok video"}
+          allow="autoplay; encrypted-media; fullscreen"
+          referrerPolicy="strict-origin-when-cross-origin"
+          allowFullScreen
+          className="w-full h-full border-0"
+        />
+        <button
+          type="button"
+          onClick={() => setShowEmbed(false)}
+          className="absolute top-2 right-2 z-10 px-2.5 py-1 text-[11px] font-semibold bg-black/80 text-white border border-white/20 hover:bg-black"
+        >
+          {t("Đóng trình phát nhúng", "Close embed")}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={`relative aspect-video ${theme.bgMain} border ${theme.border} overflow-hidden flex flex-col items-center justify-center`}
+    >
+      {meta?.thumbnailUrl ? (
+        <>
+          <img
+            src={meta.thumbnailUrl}
+            alt={meta.title ?? cleaned}
+            className="w-full h-full object-contain bg-black/40"
+          />
+          <div className="absolute inset-0 bg-black/35 flex flex-col items-center justify-center gap-3 p-4 text-center">
+            {(ytId || ttId) && (
+              <button
+                type="button"
+                onClick={() => setShowEmbed(true)}
+                className="px-4 py-2 bg-[#268bd2] hover:brightness-110 text-white text-xs font-bold border border-white/30 flex items-center gap-2 shadow-md"
+              >
+                <Play className="w-4 h-4 fill-current" />
+                {t("Xem trước video ngay", "Preview video now")}
+              </button>
+            )}
+            {meta.title && (
+              <p className="text-xs font-semibold text-white max-w-md line-clamp-2 bg-black/65 px-3 py-1 border border-white/15">
+                {meta.author ? `@${meta.author}: ` : ""}
+                {meta.title}
+              </p>
+            )}
+            <p className="text-[11px] text-white/90 bg-black/65 px-2.5 py-1">
+              {t(
+                "Khi bấm 'Tải & chạy pipeline AI', video MP4 sẽ được tải về để phát và tua trực tiếp theo biểu đồ.",
+                "Click 'Download & run AI pipeline' to load the MP4 video for direct playback and chart seeking."
+              )}
+            </p>
+          </div>
+        </>
+      ) : (
+        <div className="flex flex-col items-center justify-center gap-2.5 px-6 text-center">
+          <Link2 className={`w-8 h-8 ${theme.textSub}`} />
+          <a
+            href={cleaned}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs text-[#268bd2] hover:underline break-all font-medium"
+          >
+            {cleaned}
+          </a>
+          {(ytId || ttId) && (
+            <button
+              type="button"
+              onClick={() => setShowEmbed(true)}
+              className="mt-1 px-3 py-1.5 bg-[#268bd2] text-white text-xs font-bold flex items-center gap-1.5"
+            >
+              <Play className="w-3.5 h-3.5 fill-current" />
+              {t("Mở trình phát nhúng", "Open embedded player")}
+            </button>
+          )}
+          <p className={`text-xs ${theme.textMain}`}>
+            {t(
+              "Bấm 'Tải & chạy pipeline AI' bên dưới để backend tải video về và hiển thị trình phát tại đây.",
+              "Click 'Download & run AI pipeline' below so the backend downloads and displays the video player here."
+            )}
+          </p>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function stringSeed(str: string): number {
@@ -1208,10 +1498,23 @@ function BatchGridCard({
             src={item.previewUrl}
             muted
             preload="metadata"
+            onLoadedMetadata={(e) => {
+              try {
+                if (e.currentTarget.currentTime === 0) {
+                  e.currentTarget.currentTime = 0.1;
+                }
+              } catch {}
+            }}
+            className="w-full h-full object-cover pointer-events-none"
+          />
+        ) : item.thumbnailUrl ? (
+          <img
+            src={item.thumbnailUrl}
+            alt={item.name}
             className="w-full h-full object-cover pointer-events-none"
           />
         ) : (
-          <Link2 className="w-6 h-6 text-white/40" />
+          <Link2 className="w-6 h-6 text-white/60" />
         )}
       </div>
 
@@ -1856,6 +2159,12 @@ function DashboardView({
                             preload="metadata"
                             className="w-full h-full object-cover pointer-events-none"
                           />
+                        ) : it.thumbnailUrl ? (
+                          <img
+                            src={it.thumbnailUrl}
+                            alt={it.name}
+                            className="w-full h-full object-cover pointer-events-none"
+                          />
                         ) : it.sourceUrl ? (
                           <Link2 className="w-3.5 h-3.5 text-[#93a1a1]" />
                         ) : (
@@ -1971,33 +2280,26 @@ function DashboardView({
               </button>
             </div>
 
-            <div
-              className={`relative aspect-video ${theme.bgMain} border ${theme.border} overflow-hidden flex items-center justify-center mb-4`}
-            >
+            <div className="mb-4">
               {selectedBatchItem.previewUrl ? (
-                <video
-                  key={selectedBatchItem.id}
-                  ref={batchVideoRef}
-                  src={selectedBatchItem.previewUrl}
-                  controls
-                  onTimeUpdate={handleBatchTimeUpdate}
-                  onSeeked={handleBatchTimeUpdate}
-                  className="w-full h-full object-contain"
-                />
-              ) : (
-                <div className="flex flex-col items-center gap-2 text-center px-6">
-                  <Link2 className={`w-8 h-8 ${theme.textSub}`} />
-                  {selectedBatchItem.sourceUrl && (
-                    <a
-                      href={selectedBatchItem.sourceUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-xs text-[#268bd2] hover:underline break-all"
-                    >
-                      {selectedBatchItem.sourceUrl}
-                    </a>
-                  )}
+                <div
+                  className={`relative aspect-video ${theme.bgMain} border ${theme.border} overflow-hidden flex items-center justify-center`}
+                >
+                  <video
+                    key={selectedBatchItem.id}
+                    ref={batchVideoRef}
+                    src={selectedBatchItem.previewUrl}
+                    controls
+                    onTimeUpdate={handleBatchTimeUpdate}
+                    onSeeked={handleBatchTimeUpdate}
+                    className="w-full h-full object-contain"
+                  />
                 </div>
+              ) : (
+                <UrlPreviewBox
+                  url={selectedBatchItem.sourceUrl ?? ""}
+                  theme={theme}
+                />
               )}
             </div>
 
@@ -2099,6 +2401,7 @@ export default function SyntheticVideoDetector() {
     "file"
   );
   const [singleUrlInput, setSingleUrlInput] = useState("");
+  const [singleUrlVideoUrl, setSingleUrlVideoUrl] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const singleAbortRef = useRef<AbortController | null>(null);
   const batchAbortRef = useRef<AbortController | null>(null);
@@ -2209,10 +2512,16 @@ export default function SyntheticVideoDetector() {
       const entry = mockMode
         ? await generateMockResult(isUrlMode ? cleanedUrl : selectedFile!.name)
         : isUrlMode
-        ? await analyzeVideoUrl(cleanedUrl, controller.signal)
+        ? await analyzeVideoUrl(cleanedUrl, controller.signal, (blobUrl) => {
+            batchUrlsRef.current.push(blobUrl);
+            setSingleUrlVideoUrl(blobUrl);
+          })
         : await analyzeVideoFile(selectedFile!, controller.signal);
 
       if (controller.signal.aborted) throw abortError();
+      if (isUrlMode && entry.previewUrl) {
+        setSingleUrlVideoUrl(entry.previewUrl);
+      }
       setSingleEntry(entry);
     } catch (error: any) {
       if (isAbortError(error)) return; // người dùng chủ động hủy
@@ -2306,16 +2615,40 @@ export default function SyntheticVideoDetector() {
       return;
     }
 
-    const newItems: BatchItem[] = urls.map((u) => ({
-      id: makeId(),
-      name: u,
-      sourceUrl: u,
-      status: "queued" as BatchStatus,
-    }));
+    const newItems: BatchItem[] = urls.map((u) => {
+      const ytId = extractYouTubeId(u);
+      return {
+        id: makeId(),
+        name: u,
+        sourceUrl: u,
+        thumbnailUrl: ytId
+          ? `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`
+          : undefined,
+        status: "queued" as BatchStatus,
+      };
+    });
 
     setBatchItems((prev) => [...prev, ...newItems]);
     setBatchUrlText("");
     setShowBatchUrlBox(false);
+
+    newItems.forEach((it) => {
+      if (!it.sourceUrl) return;
+      fetchUrlPreviewMeta(it.sourceUrl).then((meta) => {
+        if (!meta.thumbnailUrl && !meta.title) return;
+        setBatchItems((prev) =>
+          prev.map((row) =>
+            row.id === it.id
+              ? {
+                  ...row,
+                  thumbnailUrl: meta.thumbnailUrl ?? row.thumbnailUrl,
+                  videoTitle: meta.title ?? row.videoTitle,
+                }
+              : row
+          )
+        );
+      });
+    });
   };
 
   const handleCsvFileSelected = (
@@ -2385,13 +2718,31 @@ export default function SyntheticVideoDetector() {
         ? await generateMockResult(item.name, labelMap.get(item.name))
         : item.file
         ? await analyzeVideoFile(item.file, controller.signal)
-        : await analyzeVideoUrl(item.sourceUrl as string, controller.signal);
+        : await analyzeVideoUrl(
+            item.sourceUrl as string,
+            controller.signal,
+            (blobUrl) => {
+              batchUrlsRef.current.push(blobUrl);
+              setBatchItems((prev) =>
+                prev.map((it) =>
+                  it.id === id ? { ...it, previewUrl: blobUrl } : it
+                )
+              );
+            }
+          );
 
       if (controller.signal.aborted) throw abortError();
 
       setBatchItems((prev) =>
         prev.map((it) =>
-          it.id === id ? { ...it, status: "done", result: entry } : it
+          it.id === id
+            ? {
+                ...it,
+                status: "done",
+                result: entry,
+                previewUrl: entry.previewUrl ?? it.previewUrl,
+              }
+            : it
         )
       );
     } catch (err: any) {
@@ -2769,30 +3120,34 @@ export default function SyntheticVideoDetector() {
                             type="text"
                             inputMode="url"
                             value={singleUrlInput}
-                            onChange={(e) =>
-                              setSingleUrlInput(e.target.value)
-                            }
+                            onChange={(e) => {
+                              setSingleUrlInput(e.target.value);
+                              setSingleUrlVideoUrl(null);
+                              setSingleEntry(null);
+                            }}
                             placeholder={t("Dán link YouTube / TikTok / Facebook...", "Paste a YouTube / TikTok / Facebook link...")}
                             className={`w-full px-4 py-3 border ${theme.border} ${theme.inputBg} ${theme.textHeading} text-sm outline-none focus:border-[#2aa198]`}
                           />
 
-                          <div
-                            className={`aspect-video ${theme.bgMain} border ${theme.border} flex flex-col items-center justify-center gap-2 px-6 text-center`}
-                          >
-                            <Link2 className={`w-8 h-8 ${theme.textSub}`} />
-
-                            {singleUrlInput.trim() ? (
-                              <p
-                                className={`text-xs ${theme.textSub} break-all`}
-                              >
-                                {singleUrlInput.trim()}
-                              </p>
-                            ) : (
-                              <p className={`text-xs ${theme.textMain}`}>
-                                {t("Video sẽ được backend tải trực tiếp từ link này (yt-dlp) rồi chạy pipeline — không xem trước được ở đây.", "The backend downloads the video directly from this link (yt-dlp) and runs the pipeline. No preview is available here.")}
-                              </p>
-                            )}
-                          </div>
+                          {singleUrlVideoUrl ? (
+                            <div
+                              className={`relative aspect-video ${theme.bgMain} border ${theme.border} overflow-hidden flex items-center justify-center`}
+                            >
+                              <video
+                                ref={videoRef}
+                                src={singleUrlVideoUrl}
+                                controls
+                                onTimeUpdate={handleTimeUpdate}
+                                onSeeked={handleTimeUpdate}
+                                className="w-full h-full object-contain"
+                              />
+                            </div>
+                          ) : (
+                            <UrlPreviewBox
+                              url={singleUrlInput}
+                              theme={theme}
+                            />
+                          )}
 
                           <div className="flex gap-3">
                             <button
@@ -2818,6 +3173,7 @@ export default function SyntheticVideoDetector() {
                                   cancelSingleAnalyze();
                                 } else {
                                   setSingleUrlInput("");
+                                  setSingleUrlVideoUrl(null);
                                   setSingleEntry(null);
                                 }
                               }}
@@ -3100,10 +3456,10 @@ export default function SyntheticVideoDetector() {
                           </span>
                         </h2>
 
-                        <div
-                          className={`relative aspect-video ${theme.bgMain} border ${theme.border} overflow-hidden flex items-center justify-center`}
-                        >
-                          {selectedBatchItem.previewUrl ? (
+                        {selectedBatchItem.previewUrl ? (
+                          <div
+                            className={`relative aspect-video ${theme.bgMain} border ${theme.border} overflow-hidden flex items-center justify-center`}
+                          >
                             <video
                               key={selectedBatchItem.id}
                               ref={batchVideoRef}
@@ -3113,27 +3469,13 @@ export default function SyntheticVideoDetector() {
                               onSeeked={handleBatchTimeUpdate}
                               className="w-full h-full object-contain"
                             />
-                          ) : (
-                            <div className="flex flex-col items-center gap-2 text-center px-6">
-                              <Link2 className={`w-8 h-8 ${theme.textSub}`} />
-
-                              {selectedBatchItem.sourceUrl && (
-                                <a
-                                  href={selectedBatchItem.sourceUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="text-xs text-[#268bd2] hover:underline break-all"
-                                >
-                                  {selectedBatchItem.sourceUrl}
-                                </a>
-                              )}
-
-                              <p className={`text-[11px] ${theme.textMain}`}>
-                                {t("Video được backend tải trực tiếp từ link này để phân tích, không xem trước được ở đây.", "The backend downloads the video directly from this link for analysis. No preview is available here.")}
-                              </p>
-                            </div>
-                          )}
-                        </div>
+                          </div>
+                        ) : (
+                          <UrlPreviewBox
+                            url={selectedBatchItem.sourceUrl ?? ""}
+                            theme={theme}
+                          />
+                        )}
 
 
                       </div>

@@ -25,6 +25,7 @@ import {
   Download,
   Link2,
   Languages,
+  ChevronDown,
 } from "lucide-react";
 import {
   LineChart,
@@ -227,7 +228,7 @@ type BatchItem = {
   error?: string;
 };
 
-const DEFAULT_THRESHOLD = 0.5;
+const DEFAULT_THRESHOLD = 0.8;
 const NGROK_BASE = "https://derived-expanse-roundish.ngrok-free.dev";
 
 let idCounter = 0;
@@ -300,13 +301,35 @@ function parseBackendResult(r: any): VideoResult {
 const POLL_INTERVAL_MS = 2000;
 const MAX_POLL_FAILURES = 60; // ~2 phút mất kết nối liên tục mới coi là lỗi
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+function abortError() {
+  return new DOMException("Aborted", "AbortError");
+}
+
+function isAbortError(e: any): boolean {
+  return e?.name === "AbortError";
+}
+
+// sleep có thể bị hủy giữa chừng bằng AbortSignal.
+const sleep = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) return reject(abortError());
+    const id = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(id);
+      reject(abortError());
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 
 // Backend chạy dạng job: POST trả job_id ngay, sau đó poll /jobs/{id}. Nhờ vậy request
 // không bị ngrok/trình duyệt cắt giữa chừng khi video xử lý lâu.
 async function postToBackend(
   path: string,
-  formData: FormData
+  formData: FormData,
+  signal?: AbortSignal
 ): Promise<VideoResult> {
   const headers = { "ngrok-skip-browser-warning": "true" };
 
@@ -314,6 +337,7 @@ async function postToBackend(
     method: "POST",
     body: formData,
     headers,
+    signal,
   });
 
   if (!submit.ok) {
@@ -328,16 +352,29 @@ async function postToBackend(
   const { job_id } = await submit.json();
   if (!job_id) throw new Error("Backend không trả job_id.");
 
+  // Khi người dùng bấm Hủy: báo backend dừng job để không chiếm GPU.
+  const cancelOnBackend = () => {
+    fetch("https://derived-expanse-roundish.ngrok-free.dev/jobs/" + job_id + "/cancel", {
+      method: "POST",
+      headers,
+    }).catch(() => {});
+  };
+  if (signal?.aborted) {
+    cancelOnBackend();
+    throw abortError();
+  }
+  signal?.addEventListener("abort", cancelOnBackend, { once: true });
+
   // Chỉ dùng thời gian do backend đo; không tự tính phía trình duyệt
   // (sẽ lẫn thời gian upload/mạng). Thiếu -> hiển thị "Backend không phản hồi".
   let failures = 0;
 
   while (true) {
-    await sleep(POLL_INTERVAL_MS);
+    await sleep(POLL_INTERVAL_MS, signal);
 
     let body: any;
     try {
-      const res = await fetch("https://derived-expanse-roundish.ngrok-free.dev/jobs/" + job_id, { headers });
+      const res = await fetch("https://derived-expanse-roundish.ngrok-free.dev/jobs/" + job_id, { headers, signal });
       if (res.status === 404) {
         body = { status: "error", error: "Job không tồn tại (backend đã khởi động lại?)." };
       } else if (!res.ok) {
@@ -346,7 +383,8 @@ async function postToBackend(
         body = await res.json();
       }
       failures = 0;
-    } catch {
+    } catch (e) {
+      if (isAbortError(e)) throw e;
       failures += 1;
       if (failures >= MAX_POLL_FAILURES) {
         throw new Error("Mất kết nối tới backend khi chờ kết quả.");
@@ -354,21 +392,28 @@ async function postToBackend(
       continue;
     }
 
+    if (body.status === "cancelled") throw abortError();
     if (body.status === "done") return parseBackendResult(body.result);
     if (body.status === "error") throw new Error(body.error ?? "Backend báo lỗi.");
   }
 }
 
-async function analyzeVideoFile(file: File): Promise<VideoResult> {
+async function analyzeVideoFile(
+  file: File,
+  signal?: AbortSignal
+): Promise<VideoResult> {
   const formData = new FormData();
   formData.append("file", file);
-  return postToBackend("/upload/", formData);
+  return postToBackend("/upload/", formData, signal);
 }
 
-async function analyzeVideoUrl(url: string): Promise<VideoResult> {
+async function analyzeVideoUrl(
+  url: string,
+  signal?: AbortSignal
+): Promise<VideoResult> {
   const formData = new FormData();
   formData.append("url", url);
-  return postToBackend("/upload_url/", formData);
+  return postToBackend("/upload_url/", formData, signal);
 }
 
 function stringSeed(str: string): number {
@@ -1232,6 +1277,123 @@ function BatchGridCard({
   );
 }
 
+// Dropdown cài đặt nâng cao (ngưỡng phân loại + chế độ test) đặt ở cuối trang.
+function AdvancedSettings({
+  theme,
+  threshold,
+  setThreshold,
+  mockMode,
+  setMockMode,
+}: {
+  theme: Theme;
+  threshold: number;
+  setThreshold: (v: number) => void;
+  mockMode: boolean;
+  setMockMode: (v: boolean) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className={`relative z-10 mt-10 ${theme.bgCard} border ${theme.border}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className={`w-full flex items-center justify-between px-5 py-3 text-xs font-semibold uppercase tracking-wider ${theme.textHeading}`}
+      >
+        <span className="flex items-center gap-2">
+          <SlidersHorizontal className="w-4 h-4 text-[#2aa198]" />
+          {t("Cài đặt nâng cao", "Advanced settings")}
+          <span className={`font-mono-tech normal-case tracking-normal font-normal ${theme.textSub}`}>
+            · {t("Ngưỡng", "Threshold")} {(threshold * 100).toFixed(0)}%
+            {mockMode ? ` · ${t("Chế độ test", "Test mode")}` : ""}
+          </span>
+        </span>
+        <ChevronDown
+          className={`w-4 h-4 transition-transform ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+
+      {open && (
+        <div className={`border-t ${theme.border} p-5 flex flex-wrap items-start gap-8`}>
+          <div className="flex-1 min-w-[280px]">
+            <div className="flex items-center justify-between text-xs mb-2">
+              <span className={`${theme.textHeading} font-semibold`}>
+                {t("Ngưỡng phân loại (threshold)", "Classification threshold")}
+              </span>
+              <div className="flex items-center gap-1.5">
+                {[0.3, 0.5, 0.7, 0.8].map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => setThreshold(preset)}
+                    className={`font-mono-tech text-[10px] px-1.5 py-0.5 border transition-colors ${
+                      Math.abs(threshold - preset) < 0.005
+                        ? "bg-[#2aa198]/15 border-[#2aa198] text-[#2aa198] font-bold"
+                        : `${theme.border} ${theme.textSub} hover:border-[#2aa198]/50`
+                    }`}
+                  >
+                    {Math.round(preset * 100)}%
+                  </button>
+                ))}
+                <span className="font-mono-tech text-xs font-bold px-2.5 py-0.5 bg-[#2aa198] text-white border border-white/20 ml-1">
+                  {(threshold * 100).toFixed(0)}%
+                </span>
+              </div>
+            </div>
+
+            <input
+              type="range"
+              min={0.01}
+              max={0.99}
+              step={0.01}
+              value={threshold}
+              onChange={(e) => setThreshold(Number(e.target.value))}
+              style={{ "--thresh-pct": `${threshold * 100}%` } as React.CSSProperties}
+              className="threshold-slider"
+            />
+
+            <div className={`flex justify-between font-mono-tech text-[10px] ${theme.textSub} mt-1`}>
+              <span>0% (REAL)</span>
+              <span>25%</span>
+              <span>50%</span>
+              <span>75%</span>
+              <span>100% (AI)</span>
+            </div>
+
+            <p className={`text-[11px] ${theme.textSub} mt-1.5`}>
+              {t("Video có xác suất AI lớn hơn", "Videos with an AI probability above")}{" "}
+              <span className="font-semibold text-[#2aa198]">{(threshold * 100).toFixed(0)}%</span>{" "}
+              {t("sẽ bị coi là AI-generated. Chỉnh xong áp dụng ngay, không cần chạy lại pipeline.", "are treated as AI-generated. Changes apply instantly, no need to rerun the pipeline.")}
+            </p>
+          </div>
+
+          <label className="flex items-start gap-2 cursor-pointer shrink-0 max-w-xs">
+            <input
+              type="checkbox"
+              checked={mockMode}
+              onChange={(e) => setMockMode(e.target.checked)}
+              className="accent-[#b58900] mt-0.5"
+            />
+            <span>
+              <span
+                className={`text-xs font-bold flex items-center gap-1 ${
+                  mockMode ? "text-[#b58900]" : theme.textHeading
+                }`}
+              >
+                <FlaskConical className="w-3.5 h-3.5" /> {t("Chế độ test (dữ liệu giả)", "Test mode (mock data)")}
+              </span>
+              <span className={`text-[11px] ${theme.textSub} block mt-0.5`}>
+                {t("Sinh kết quả giả để test giao diện, không cần gọi backend Ngrok/Colab.", "Generates mock results to test the UI without calling the Ngrok/Colab backend.")}
+              </span>
+            </span>
+          </label>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DashboardView({
   theme,
   isDarkMode,
@@ -1244,6 +1406,7 @@ function DashboardView({
   metrics,
   isBatchRunning,
   runAllBatch,
+  cancelBatch,
   removeBatchItem,
   handleBatchFilesSelected,
   handleAddBatchUrls,
@@ -1280,6 +1443,7 @@ function DashboardView({
   metrics: ReturnType<typeof computeMetrics>;
   isBatchRunning: boolean;
   runAllBatch: () => void;
+  cancelBatch: () => void;
   removeBatchItem: (id: string) => void;
   handleBatchFilesSelected: (
     e: React.ChangeEvent<HTMLInputElement>
@@ -1385,53 +1549,6 @@ function DashboardView({
         {t("Dashboard vận hành", "Operations dashboard")}
       </h1>
 
-      <div
-        className={`${theme.bgCard} border ${theme.border} p-4 mb-4 flex flex-wrap items-center gap-6`}
-      >
-        <div className="flex items-center gap-3 flex-1 min-w-[280px]">
-          <div className="w-8 h-8 bg-[#2aa198]/10 border border-[#2aa198]/40 flex items-center justify-center shrink-0">
-            <SlidersHorizontal className="w-4 h-4 text-[#2aa198]" />
-          </div>
-          <div className="flex-1">
-            <div className="flex items-center justify-between text-xs mb-1.5">
-              <span className={`${theme.textHeading} font-semibold flex items-center gap-2`}>
-                {t("Ngưỡng phân loại (threshold)", "Classification threshold")}
-              </span>
-              <span className="font-mono-tech text-xs font-bold px-2 py-0.5 bg-[#2aa198] text-white border border-white/20">
-                {(threshold * 100).toFixed(0)}%
-              </span>
-            </div>
-
-            <input
-              type="range"
-              min={0.01}
-              max={0.99}
-              step={0.01}
-              value={threshold}
-              onChange={(e) => setThreshold(Number(e.target.value))}
-              style={{ "--thresh-pct": `${threshold * 100}%` } as React.CSSProperties}
-              className="threshold-slider"
-            />
-          </div>
-        </div>
-
-        <label className="flex items-center gap-2 cursor-pointer shrink-0 text-xs">
-          <input
-            type="checkbox"
-            checked={mockMode}
-            onChange={(e) => setMockMode(e.target.checked)}
-            className="accent-[#b58900]"
-          />
-          <span
-            className={`font-bold flex items-center gap-1 ${
-              mockMode ? "text-[#b58900]" : theme.textHeading
-            }`}
-          >
-            <FlaskConical className="w-3.5 h-3.5" /> {t("Chế độ test", "Test mode")}
-          </span>
-        </label>
-      </div>
-
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
         <MetricBox
           label={t("Tổng video", "Total videos")}
@@ -1532,10 +1649,20 @@ function DashboardView({
           <Download className="w-3.5 h-3.5" /> {t("Xuất CSV", "Export CSV")}
         </button>
 
+        {isBatchRunning && (
+          <button
+            onClick={cancelBatch}
+            className="ml-auto text-xs font-bold px-4 py-2 border border-[#dc322f] text-[#dc322f] hover:bg-[#dc322f]/10 flex items-center gap-1.5"
+          >
+            <X className="w-3.5 h-3.5" />
+            {t("Hủy", "Cancel")}
+          </button>
+        )}
+
         <button
           onClick={runAllBatch}
           disabled={isBatchRunning}
-          className="ml-auto text-xs font-bold px-4 py-2 border bg-[#268bd2] hover:brightness-110 text-white disabled:opacity-50 flex items-center gap-1.5"
+          className={`${isBatchRunning ? "" : "ml-auto "}text-xs font-bold px-4 py-2 border bg-[#268bd2] hover:brightness-110 text-white disabled:opacity-50 flex items-center gap-1.5`}
         >
           {isBatchRunning ? (
             <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -1946,6 +2073,9 @@ export default function SyntheticVideoDetector() {
   );
   const [singleUrlInput, setSingleUrlInput] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const singleAbortRef = useRef<AbortController | null>(null);
+  const batchAbortRef = useRef<AbortController | null>(null);
+  const batchCancelledRef = useRef(false);
   const [singleEntry, setSingleEntry] = useState<VideoResult | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
@@ -2022,6 +2152,9 @@ export default function SyntheticVideoDetector() {
 
     if (isUrlMode ? !trimmedUrl : !selectedFile) return;
 
+    const controller = new AbortController();
+    singleAbortRef.current = controller;
+
     setIsAnalyzing(true);
     setSingleEntry(null);
     setCurrentTime(0);
@@ -2030,18 +2163,31 @@ export default function SyntheticVideoDetector() {
       const entry = mockMode
         ? await generateMockResult(isUrlMode ? trimmedUrl : selectedFile!.name)
         : isUrlMode
-        ? await analyzeVideoUrl(trimmedUrl)
-        : await analyzeVideoFile(selectedFile!);
+        ? await analyzeVideoUrl(trimmedUrl, controller.signal)
+        : await analyzeVideoFile(selectedFile!, controller.signal);
 
+      if (controller.signal.aborted) throw abortError();
       setSingleEntry(entry);
     } catch (error) {
+      if (isAbortError(error)) return; // người dùng chủ động hủy
       console.error("API Upload Error:", error);
       alert(
         t("Không thể kết nối tới model AI qua Ngrok. Vui lòng kiểm tra lại URL!", "Cannot reach the AI model through Ngrok. Please check the URL!")
       );
     } finally {
-      setIsAnalyzing(false);
+      if (singleAbortRef.current === controller) {
+        singleAbortRef.current = null;
+        setIsAnalyzing(false);
+      }
     }
+  };
+
+  // Hủy phân tích video đơn đang chạy (không xóa video đã chọn).
+  const cancelSingleAnalyze = () => {
+    singleAbortRef.current?.abort();
+    singleAbortRef.current = null;
+    setIsAnalyzing(false);
+    setSingleEntry(null);
   };
 
   const handleTimeUpdate = () => {
@@ -2164,12 +2310,17 @@ export default function SyntheticVideoDetector() {
 
     setSelectedBatchId(id);
 
+    const controller = new AbortController();
+    batchAbortRef.current = controller;
+
     try {
       const entry = mockMode
         ? await generateMockResult(item.name, labelMap.get(item.name))
         : item.file
-        ? await analyzeVideoFile(item.file)
-        : await analyzeVideoUrl(item.sourceUrl as string);
+        ? await analyzeVideoFile(item.file, controller.signal)
+        : await analyzeVideoUrl(item.sourceUrl as string, controller.signal);
+
+      if (controller.signal.aborted) throw abortError();
 
       setBatchItems((prev) =>
         prev.map((it) =>
@@ -2177,6 +2328,15 @@ export default function SyntheticVideoDetector() {
         )
       );
     } catch (err: any) {
+      if (isAbortError(err)) {
+        // Bị hủy: trả video về hàng đợi để có thể chạy lại.
+        setBatchItems((prev) =>
+          prev.map((it) =>
+            it.id === id ? { ...it, status: "queued", error: undefined } : it
+          )
+        );
+        return;
+      }
       console.error("Batch upload error:", err);
 
       setBatchItems((prev) =>
@@ -2202,13 +2362,22 @@ export default function SyntheticVideoDetector() {
 
     if (queue.length === 0) return;
 
+    batchCancelledRef.current = false;
     setIsBatchRunning(true);
 
     for (const item of queue) {
+      if (batchCancelledRef.current) break;
       await processOneBatchItem(item);
     }
 
+    batchAbortRef.current = null;
     setIsBatchRunning(false);
+  };
+
+  // Hủy toàn bộ lượt chạy hàng loạt: dừng video đang xử lý và bỏ qua các video còn lại.
+  const cancelBatch = () => {
+    batchCancelledRef.current = true;
+    batchAbortRef.current?.abort();
   };
 
   const handleBatchTimeUpdate = () => {
@@ -2482,91 +2651,6 @@ export default function SyntheticVideoDetector() {
             )}
 
             <div
-              className={`tech-panel ${theme.bgCard} border ${theme.border} p-5 mb-6 flex flex-wrap items-center gap-6`}
-            >
-              <div className="flex items-start gap-3.5 flex-1 min-w-[280px]">
-                <div className="w-9 h-9 bg-[#2aa198]/15 border border-[#2aa198]/50 text-[#2aa198] flex items-center justify-center shrink-0 mt-0.5">
-                  <SlidersHorizontal className="w-4 h-4" />
-                </div>
-
-                <div className="flex-1">
-                  <div className="flex items-center justify-between text-xs mb-2">
-                    <span className={`${theme.textHeading} font-semibold uppercase tracking-wider flex items-center gap-2`}>
-                      {t("Ngưỡng phân loại (threshold)", "Classification threshold")}
-                    </span>
-                    <div className="flex items-center gap-1.5">
-                      {[0.3, 0.5, 0.7].map((preset) => (
-                        <button
-                          key={preset}
-                          type="button"
-                          onClick={() => setThreshold(preset)}
-                          className={`font-mono-tech text-[10px] px-1.5 py-0.5 border transition-colors ${
-                            Math.abs(threshold - preset) < 0.005
-                              ? "bg-[#2aa198]/15 border-[#2aa198] text-[#2aa198] font-bold"
-                              : `${theme.border} ${theme.textSub} hover:border-[#2aa198]/50`
-                          }`}
-                        >
-                          {Math.round(preset * 100)}%
-                        </button>
-                      ))}
-                      <span className="font-mono-tech text-xs font-bold px-2.5 py-0.5 bg-[#2aa198] text-white border border-white/20 ml-1">
-                        {(threshold * 100).toFixed(0)}%
-                      </span>
-                    </div>
-                  </div>
-
-                  <input
-                    type="range"
-                    min={0.01}
-                    max={0.99}
-                    step={0.01}
-                    value={threshold}
-                    onChange={(e) => setThreshold(Number(e.target.value))}
-                    style={{ "--thresh-pct": `${threshold * 100}%` } as React.CSSProperties}
-                    className="threshold-slider"
-                  />
-
-                  <div className={`flex justify-between font-mono-tech text-[10px] ${theme.textSub} mt-1`}>
-                    <span>0% (REAL)</span>
-                    <span>25%</span>
-                    <span>50%</span>
-                    <span>75%</span>
-                    <span>100% (AI)</span>
-                  </div>
-
-                  <p className={`text-[11px] ${theme.textSub} mt-1.5`}>
-                    {t("Video có xác suất AI lớn hơn", "Videos with an AI probability above")}{" "}
-                    <span className="font-semibold text-[#2aa198]">{(threshold * 100).toFixed(0)}%</span>{" "}
-                    {t("sẽ bị coi là AI-generated. Chỉnh xong áp dụng ngay, không cần chạy lại pipeline.", "are treated as AI-generated. Changes apply instantly, no need to rerun the pipeline.")}
-                  </p>
-                </div>
-              </div>
-
-              <label className="flex items-start gap-2 cursor-pointer shrink-0 max-w-xs">
-                <input
-                  type="checkbox"
-                  checked={mockMode}
-                  onChange={(e) => setMockMode(e.target.checked)}
-                  className="accent-[#b58900] mt-0.5"
-                />
-
-                <span>
-                  <span
-                    className={`text-xs font-bold flex items-center gap-1 ${
-                      mockMode ? "text-[#b58900]" : theme.textHeading
-                    }`}
-                  >
-                    <FlaskConical className="w-3.5 h-3.5" /> {t("Chế độ test (dữ liệu giả)", "Test mode (mock data)")}
-                  </span>
-
-                  <span className={`text-[11px] ${theme.textSub} block mt-0.5`}>
-                    {t("Sinh kết quả giả để test giao diện, không cần gọi backend Ngrok/Colab.", "Generates mock results to test the UI without calling the Ngrok/Colab backend.")}
-                  </span>
-                </span>
-              </label>
-            </div>
-
-            <div
               className={`flex items-center gap-2 mb-8 border-b ${theme.border}`}
             >
               <button
@@ -2633,14 +2717,14 @@ export default function SyntheticVideoDetector() {
                             <p
                               className={`text-sm ${theme.textHeading} font-medium mb-1`}
                             >
-                              Drag and drop video here or{" "}
+                              {t("Kéo thả video vào đây hoặc", "Drag and drop video here or")}{" "}
                               <span className="text-[#268bd2]">
-                                {t("browse files", "browse files")}
+                                {t("chọn file", "browse files")}
                               </span>
                             </p>
 
                             <p className={`text-xs ${theme.textMain}`}>
-                              {t("Supports MP4, MOV, AVI (Max 100MB)", "Supports MP4, MOV, AVI (max 100MB)")}
+                              {t("Hỗ trợ MP4, MOV, AVI (tối đa 100MB)", "Supports MP4, MOV, AVI (max 100MB)")}
                             </p>
 
                             <input
@@ -2676,7 +2760,7 @@ export default function SyntheticVideoDetector() {
                                 {isAnalyzing ? (
                                   <>
                                     <RefreshCw className="w-5 h-5 animate-spin" />{" "}
-                                    Analyzing frames...
+                                    {t("Đang phân tích khung hình...", "Analyzing frames...")}
                                   </>
                                 ) : (
                                   <>
@@ -2687,12 +2771,16 @@ export default function SyntheticVideoDetector() {
 
                               <button
                                 onClick={() => {
-                                  setSelectedFile(null);
-                                  setSingleEntry(null);
+                                  if (isAnalyzing) {
+                                    cancelSingleAnalyze();
+                                  } else {
+                                    setSelectedFile(null);
+                                    setSingleEntry(null);
+                                  }
                                 }}
                                 className={`px-4 py-3 border ${theme.border} ${theme.btnCancel} text-sm font-medium`}
                               >
-                                {t("Cancel", "Cancel")}
+                                {t("Hủy", "Cancel")}
                               </button>
                             </div>
                           </div>
@@ -2747,12 +2835,16 @@ export default function SyntheticVideoDetector() {
 
                             <button
                               onClick={() => {
-                                setSingleUrlInput("");
-                                setSingleEntry(null);
+                                if (isAnalyzing) {
+                                  cancelSingleAnalyze();
+                                } else {
+                                  setSingleUrlInput("");
+                                  setSingleEntry(null);
+                                }
                               }}
                               className={`px-4 py-3 border ${theme.border} ${theme.btnCancel} text-sm font-medium`}
                             >
-                              {t("Cancel", "Cancel")}
+                              {t("Hủy", "Cancel")}
                             </button>
                           </div>
                         </div>
@@ -2779,8 +2871,7 @@ export default function SyntheticVideoDetector() {
                             >
                               <Cpu className="w-12 h-12 mx-auto mb-3 opacity-40" />
                               <p className="text-sm">
-                                No data available. Please upload a video and run
-                                the model.
+                                {t("Chưa có dữ liệu. Hãy tải video lên và chạy model.", "No data available. Please upload a video and run the model.")}
                               </p>
                             </div>
                           )}
@@ -2832,7 +2923,7 @@ export default function SyntheticVideoDetector() {
                     className={`${theme.bgCard} border ${theme.border} p-6 mt-8`}
                   >
                     <p className={`text-sm ${theme.textSub} mb-4`}>
-                      Play the video to view real-time data below.
+                      {t("Phát video để xem dữ liệu theo thời gian thực bên dưới.", "Play the video to view real-time data below.")}
                     </p>
 
                     <h2
@@ -2908,6 +2999,15 @@ export default function SyntheticVideoDetector() {
                           onChange={handleCsvFileSelected}
                         />
                       </label>
+
+                      {isBatchRunning && (
+                        <button
+                          onClick={cancelBatch}
+                          className="text-xs font-bold px-4 py-2 border border-[#dc322f] text-[#dc322f] hover:bg-[#dc322f]/10 flex items-center gap-2"
+                        >
+                          <X className="w-3.5 h-3.5" /> {t("Hủy", "Cancel")}
+                        </button>
+                      )}
 
                       <button
                         onClick={runAllBatch}
@@ -3212,7 +3312,7 @@ export default function SyntheticVideoDetector() {
                       className={`tech-panel ${theme.bgCard} border ${theme.border} p-6`}
                     >
                       <p className={`text-sm ${theme.textSub} mb-4`}>
-                        Play the video to view real-time data below.
+                        {t("Phát video để xem dữ liệu theo thời gian thực bên dưới.", "Play the video to view real-time data below.")}
                       </p>
 
                       <h2
@@ -3250,6 +3350,7 @@ export default function SyntheticVideoDetector() {
             metrics={metrics}
             isBatchRunning={isBatchRunning}
             runAllBatch={runAllBatch}
+            cancelBatch={cancelBatch}
             removeBatchItem={removeBatchItem}
             handleBatchFilesSelected={handleBatchFilesSelected}
             handleAddBatchUrls={handleAddBatchUrls}
@@ -3276,6 +3377,14 @@ export default function SyntheticVideoDetector() {
             handleBatchSeek={handleBatchSeek}
           />
         )}
+
+        <AdvancedSettings
+          theme={theme}
+          threshold={threshold}
+          setThreshold={setThreshold}
+          mockMode={mockMode}
+          setMockMode={setMockMode}
+        />
       </main>
     </div>
   );

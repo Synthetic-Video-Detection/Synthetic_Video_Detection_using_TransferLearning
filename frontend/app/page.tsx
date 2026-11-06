@@ -736,13 +736,10 @@ async function analyzeVideoFile(
   return postToBackend("/upload/", formData, signal);
 }
 
-async function analyzeVideoUrl(
-  url: string,
-  signal?: AbortSignal
-): Promise<VideoResult> {
+async function analyzeVideoUrl(url: string, signal?: AbortSignal): Promise<VideoResult> {
   const formData = new FormData();
   formData.append("url", url);
-  return postToBackend("/analyze-url/", formData, signal);
+  return postToBackend("/upload_url/", formData, signal);
 }
 
 function stringSeed(str: string): number {

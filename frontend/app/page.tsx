@@ -427,6 +427,11 @@ function DotGlowBackground({
       speed: 0.5 + Math.random(),
     }));
 
+    // Hệ số co theo chiều rộng màn hình: máy tính = 1, điện thoại ≈ 0.45.
+    // Khoảng cách chấm, kích thước chấm, vùng sáng đều co theo hệ số này.
+    let scale = 1;
+    const calcScale = (w: number) => Math.min(1, Math.max(0.45, w / 1100));
+
     let lastW = 0;
     const resize = () => {
       const nextW = canvas.offsetWidth || window.innerWidth;
@@ -435,6 +440,7 @@ function DotGlowBackground({
       if (lastW !== 0 && nextW === lastW) return;
       lastW = nextW;
       W = nextW;
+      scale = calcScale(W);
       H = canvas.offsetHeight || window.innerHeight;
       canvas.width = W * dpr;
       canvas.height = H * dpr;
@@ -465,30 +471,36 @@ function DotGlowBackground({
         ctx.fillStyle = resolvedBg;
         ctx.fillRect(0, 0, W, H);
 
-        const cols = Math.ceil(W / spacing);
-        const rows = Math.ceil(H / spacing);
+        const sp = spacing * scale;
+        const dSize = dotSize * scale;
+        const wander = 120 * scale;
+        const mouseR = 200 * scale;
+
+        const cols = Math.ceil(W / sp);
+        const rows = Math.ceil(H / sp);
 
         ctx.fillStyle = resolvedDot;
 
         for (let y = 0; y < rows; y++) {
-          const py = y * spacing;
+          const py = y * sp;
           for (let x = 0; x < cols; x++) {
-            const px = x * spacing;
+            const px = x * sp;
             let intensity = 0;
 
             for (let i = 0; i < blobs.length; i++) {
               const b = blobs[i];
-              const bx = b.nx * W + Math.sin(time * b.speed + i) * 120;
-              const by = b.ny * H + Math.cos(time * b.speed + i) * 120;
+              const bx = b.nx * W + Math.sin(time * b.speed + i) * wander;
+              const by = b.ny * H + Math.cos(time * b.speed + i) * wander;
+              const br = b.r * scale;
               const d = Math.hypot(px - bx, py - by);
-              if (d < b.r) {
-                intensity += 1 - d / b.r;
+              if (d < br) {
+                intensity += 1 - d / br;
               }
             }
 
             const md = Math.hypot(px - mouseX, py - mouseY);
-            if (md < 200) {
-              intensity += (1 - md / 200) * 1.5;
+            if (md < mouseR) {
+              intensity += (1 - md / mouseR) * 1.5;
             }
 
             if (intensity > 0.01) {
@@ -498,7 +510,7 @@ function DotGlowBackground({
               ctx.arc(
                 px,
                 py,
-                dotSize * (0.6 + Math.min(intensity, 1)),
+                dSize * (0.6 + Math.min(intensity, 1)),
                 0,
                 Math.PI * 2
               );

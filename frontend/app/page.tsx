@@ -427,8 +427,14 @@ function DotGlowBackground({
       speed: 0.5 + Math.random(),
     }));
 
+    let lastW = 0;
     const resize = () => {
-      W = canvas.offsetWidth || window.innerWidth;
+      const nextW = canvas.offsetWidth || window.innerWidth;
+      // Trên điện thoại, thanh địa chỉ co/giãn khi cuộn chỉ đổi chiều cao:
+      // bỏ qua để nền đứng yên, chỉ vẽ lại khi chiều rộng thật sự đổi (xoay màn hình...).
+      if (lastW !== 0 && nextW === lastW) return;
+      lastW = nextW;
+      W = nextW;
       H = canvas.offsetHeight || window.innerHeight;
       canvas.width = W * dpr;
       canvas.height = H * dpr;
@@ -519,7 +525,8 @@ function DotGlowBackground({
     <canvas
       ref={canvasRef}
       aria-hidden
-      className="fixed inset-0 z-0 pointer-events-none block w-full h-full"
+      className="fixed top-0 left-0 z-0 pointer-events-none block w-full"
+      style={{ height: "100lvh" }}
     />
   );
 }
@@ -736,7 +743,10 @@ async function analyzeVideoFile(
   return postToBackend("/upload/", formData, signal);
 }
 
-async function analyzeVideoUrl(url: string, signal?: AbortSignal): Promise<VideoResult> {
+async function analyzeVideoUrl(
+  url: string,
+  signal?: AbortSignal
+): Promise<VideoResult> {
   const formData = new FormData();
   formData.append("url", url);
   return postToBackend("/upload_url/", formData, signal);
@@ -1112,8 +1122,11 @@ const INTEGRITY_CSS = `
   }
 
   html { scroll-behavior: smooth; }
+  html, body { overflow-x: hidden; max-width: 100%; -webkit-text-size-adjust: 100%; }
 
   .integrity-ui {
+    overflow-x: hidden;
+    width: 100%;
     line-height: 1.6;
     font-variant-numeric: lining-nums tabular-nums;
     -webkit-font-smoothing: antialiased;
@@ -1981,10 +1994,10 @@ function DashboardView({
       )}
 
       <div
-        className={`${theme.bgCard} border ${theme.border} p-3 mb-2 flex flex-wrap items-center gap-2`}
+        className={`${theme.bgCard} border ${theme.border} p-3 mb-2 grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2`}
       >
         <label
-          className={`text-xs px-3 py-2 border ${theme.border} ${theme.btnCancel} cursor-pointer flex items-center gap-1.5`}
+          className={`text-xs px-3 py-2 border ${theme.border} ${theme.btnCancel} cursor-pointer flex items-center justify-center gap-1.5`}
         >
           <Upload className="w-3.5 h-3.5" /> {t("Thêm video", "Add videos")}
           <input
@@ -1997,7 +2010,7 @@ function DashboardView({
         </label>
 
         <label
-          className={`text-xs px-3 py-2 border ${theme.border} ${theme.btnCancel} cursor-pointer flex items-center gap-1.5`}
+          className={`text-xs px-3 py-2 border ${theme.border} ${theme.btnCancel} cursor-pointer flex items-center justify-center gap-1.5`}
         >
           <FileSpreadsheet className="w-3.5 h-3.5" />{" "}
           {t("Nhãn CSV", "CSV labels")}
@@ -2011,7 +2024,7 @@ function DashboardView({
 
         <button
           onClick={() => downloadResultsCsv(batchItems, labelMap, threshold)}
-          className={`text-xs px-3 py-2 border ${theme.border} ${theme.btnCancel} flex items-center gap-1.5`}
+          className={`text-xs px-3 py-2 border ${theme.border} ${theme.btnCancel} flex items-center justify-center gap-1.5`}
         >
           <Download className="w-3.5 h-3.5" /> {t("Xuất CSV", "Export CSV")}
         </button>
@@ -2019,7 +2032,7 @@ function DashboardView({
         {isBatchRunning && (
           <button
             onClick={cancelBatch}
-            className="ml-auto text-xs font-bold px-4 py-2 border border-[#dc322f] text-[#dc322f] hover:bg-[#dc322f]/10 flex items-center gap-1.5"
+            className="sm:ml-auto text-xs font-bold px-4 py-2 border border-[#dc322f] text-[#dc322f] hover:bg-[#dc322f]/10 flex items-center justify-center gap-1.5"
           >
             <X className="w-3.5 h-3.5" />
             {t("Hủy", "Cancel")}
@@ -2030,8 +2043,8 @@ function DashboardView({
           onClick={runAllBatch}
           disabled={isBatchRunning}
           className={`${
-            isBatchRunning ? "" : "ml-auto "
-          }text-xs font-bold px-4 py-2 border bg-[#268bd2] hover:brightness-110 text-white disabled:opacity-50 flex items-center gap-1.5`}
+            isBatchRunning ? "" : "sm:ml-auto "
+          }col-span-2 sm:col-span-1 justify-center text-xs font-bold px-4 py-2 border bg-[#268bd2] hover:brightness-110 text-white disabled:opacity-50 flex items-center gap-1.5`}
         >
           {isBatchRunning ? (
             <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -2043,7 +2056,7 @@ function DashboardView({
 
         {csvInfo && (
           <div
-            className={`text-xs ${theme.textSub} w-full flex items-center justify-between pt-1`}
+            className={`text-xs ${theme.textSub} w-full col-span-2 sm:col-span-1 flex flex-wrap items-center justify-between gap-1 pt-1`}
           >
             <span>
               {t("Nhãn:", "Labels:")}{" "}
@@ -2069,13 +2082,13 @@ function DashboardView({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder={t("Tìm theo tên video...", "Search by video name...")}
-          className={`flex-1 min-w-[200px] text-xs px-3 py-2 border ${theme.border} ${theme.inputBg} ${theme.textHeading} outline-none focus:border-[#2aa198]`}
+          className={`w-full sm:w-auto flex-1 sm:min-w-[200px] text-xs px-3 py-2 border ${theme.border} ${theme.inputBg} ${theme.textHeading} outline-none focus:border-[#2aa198]`}
         />
 
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as any)}
-          className={`text-xs px-2 py-2 border ${theme.border} ${theme.inputBg} ${theme.textHeading}`}
+          className={`flex-1 sm:flex-none min-w-0 text-xs px-2 py-2 border ${theme.border} ${theme.inputBg} ${theme.textHeading}`}
         >
           <option value="all">{t("Tất cả trạng thái", "All statuses")}</option>
           <option value="queued">{t("Chờ", "Queued")}</option>
@@ -2087,7 +2100,7 @@ function DashboardView({
         <select
           value={labelFilter}
           onChange={(e) => setLabelFilter(e.target.value as any)}
-          className={`text-xs px-2 py-2 border ${theme.border} ${theme.inputBg} ${theme.textHeading}`}
+          className={`flex-1 sm:flex-none min-w-0 text-xs px-2 py-2 border ${theme.border} ${theme.inputBg} ${theme.textHeading}`}
         >
           <option value="all">{t("Tất cả nhãn", "All labels")}</option>
           <option value="ai">{t("Dự đoán AI", "Predicted AI")}</option>
@@ -2099,8 +2112,8 @@ function DashboardView({
       </div>
 
       <div className={`${theme.bgCard} border ${theme.border} overflow-hidden`}>
-        <div className="overflow-y-auto" style={{ maxHeight: 520 }}>
-          <table className="w-full text-xs">
+        <div className="overflow-auto" style={{ maxHeight: 520 }}>
+          <table className="w-full min-w-[560px] text-xs">
             <thead className={`sticky top-0 ${theme.bgMain} z-10`}>
               <tr>
                 <th
@@ -2782,7 +2795,7 @@ export default function SyntheticVideoDetector() {
 
   return (
     <div
-      className={`integrity-ui ${beVietnam.variable} relative min-h-screen ${theme.bgMain} ${theme.textMain} transition-colors duration-500`}
+      className={`integrity-ui ${beVietnam.variable} relative min-h-screen w-full overflow-x-hidden ${theme.bgMain} ${theme.textMain} transition-colors duration-500`}
       style={
         {
           "--font-ui": "var(--font-be-vietnam)",
@@ -2807,7 +2820,7 @@ export default function SyntheticVideoDetector() {
       <header
         className={`app-header border-b ${theme.border} ${theme.bgCard} sticky top-0 z-50 transition-colors duration-500`}
       >
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 py-2 sm:py-0 sm:h-16 flex flex-wrap items-center justify-center sm:justify-between gap-x-4 gap-y-2">
           <div className="flex items-center gap-2.5">
             <svg
               className="w-6 h-6 shrink-0"
@@ -2827,13 +2840,13 @@ export default function SyntheticVideoDetector() {
             </span>
           </div>
 
-          <div className="flex items-center gap-4 text-xs">
+          <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-4 text-xs">
             <div
               className={`flex items-center gap-1 p-1 border ${theme.border} ${theme.bgMain}`}
             >
               <button
                 onClick={() => setAppMode("classic")}
-                className={`px-3 py-1 transition-colors ${
+                className={`px-3 py-1 whitespace-nowrap transition-colors ${
                   appMode === "classic"
                     ? "bg-[#268bd2] text-white font-bold"
                     : `${theme.textHeading} font-medium hover:bg-[#268bd2]/15`
@@ -2844,7 +2857,7 @@ export default function SyntheticVideoDetector() {
 
               <button
                 onClick={() => setAppMode("dashboard")}
-                className={`px-3 py-1 transition-colors flex items-center gap-1.5 ${
+                className={`px-3 py-1 whitespace-nowrap transition-colors flex items-center gap-1.5 ${
                   appMode === "dashboard"
                     ? "bg-[#268bd2] text-white font-bold"
                     : `${theme.textHeading} font-medium hover:bg-[#268bd2]/15`
@@ -2855,13 +2868,13 @@ export default function SyntheticVideoDetector() {
             </div>
 
             {mockMode ? (
-              <span className="flex items-center gap-1.5 text-[#b58900] bg-[#b58900]/10 px-3 py-1 border border-[#b58900]/50">
+              <span className="flex items-center gap-1.5 whitespace-nowrap text-[#b58900] bg-[#b58900]/10 px-3 py-1 border border-[#b58900]/50">
                 <FlaskConical className="w-3.5 h-3.5" />
                 {t("Chế độ test (dữ liệu giả)", "Test mode (mock data)")}
               </span>
             ) : (
               <span
-                className={`flex items-center gap-1.5 text-[#2aa198] ${theme.bgMain} px-3 py-1 border ${theme.border}`}
+                className={`flex items-center gap-1.5 whitespace-nowrap text-[#2aa198] ${theme.bgMain} px-3 py-1 border ${theme.border}`}
               >
                 <span className="w-2 h-2 bg-[#2aa198] animate-pulse"></span>
                 {t("Đã kết nối", "Connected")}
@@ -2910,7 +2923,7 @@ export default function SyntheticVideoDetector() {
 
       <main
         key={appMode}
-        className="relative z-10 max-w-7xl mx-auto px-6 py-10 fade-in-up"
+        className="relative z-10 w-full max-w-7xl mx-auto px-3 sm:px-6 py-6 sm:py-10 fade-in-up"
       >
         {noticeMessage && (
           <div className="mb-6 p-4 border border-[#dc322f] bg-[#dc322f]/10 text-[#dc322f] flex items-center justify-between gap-4 text-xs font-medium">

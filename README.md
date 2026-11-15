@@ -1,8 +1,5 @@
 # Synthetic Video Detection using Transfer Learning ( Varuna)
 
-![Status](https://img.shields.io/badge/Status-Completed-success)
-[![Live Demo](https://img.shields.io/badge/Demo-Vercel-black)](https://synthetic-video-detection-using-tra.vercel.app/)
-
 ## Overview
 Addressing the growing impact of harmful AI-generated videos on vulnerable groups, this project provides an end-to-end detection solution leveraging Transfer Learning. The system is fully implemented and deployed as an interactive web application.
 

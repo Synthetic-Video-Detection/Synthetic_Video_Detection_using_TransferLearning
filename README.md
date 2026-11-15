@@ -8,8 +8,8 @@ Addressing the growing impact of harmful AI-generated videos on vulnerable group
 ## Model Architecture & Pipeline
 Our detection pipeline processes video frames through three main stages:
 1. **Feature Extraction:** Extracts rich visual-semantic embeddings from video frames via **CLIP**.
-2. **Temporal & Spatial Aggregation:** Synthesizes frame-level information using a **Cross-Attention** mechanism.
-3. **Classification:** Identifies synthetic artifacts and classifies content using **LSTM** and **Vision Transformer (ViT)** models.
+2. **Temporal & Spatial Aggregation:** Synthesizes frame-level information using a *concatenation** mechanism.
+3. **Classification:** Identifies synthetic artifacts and classifies content using **Bi-LSTM**  models.
 
 ## Repository Structure
 * `frontend/` - Source code for the interactive web interface (deployed on Vercel).

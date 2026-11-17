@@ -1065,6 +1065,15 @@ function ScoreChart({
     return { chartData: pts, end };
   }, [data, duration]);
 
+  // Mốc trục X theo số nguyên giây (0, 1, 2, ...), thưa dần nếu video dài
+  const ticks = useMemo(() => {
+    const stepT = Math.max(1, Math.ceil(end / 10));
+    const arr: number[] = [];
+    for (let v = 0; v < end; v += stepT) arr.push(v);
+    arr.push(Math.round(end * 100) / 100);
+    return arr;
+  }, [end]);
+
   return (
     <ResponsiveContainer width="100%" height={height}>
       <LineChart
@@ -1085,7 +1094,8 @@ function ScoreChart({
           dataKey="time"
           type="number"
           domain={[0, end]}
-          allowDataOverflow
+          ticks={ticks}
+          interval={0}
           tick={{
             fill: isDarkMode ? "#c2d6d9" : "#3a4f57",
             fontSize: 12,
@@ -1151,7 +1161,8 @@ function ScoreChart({
           strokeWidth={2}
           label={{
             value: t("Thời điểm hiện tại", "Current time"),
-            position: "top",
+            position: "insideTopRight",
+            offset: 6,
             fill: "#dc322f",
             fontSize: 11,
           }}
@@ -2597,7 +2608,7 @@ export default function SyntheticVideoDetector() {
                       className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider flex items-center gap-2`}
                     >
                       <Layers className="w-4 h-4 text-[#2aa198]" />{" "}
-                      {t("Xử lý nhiều video", "Process multiple videos")}
+                      {t("Phân tích video", "Video analysis")}
                     </h2>
 
                     <div className="flex flex-wrap items-center gap-3">
@@ -2673,11 +2684,11 @@ export default function SyntheticVideoDetector() {
                         className={`text-sm ${theme.textHeading} font-medium mb-1`}
                       >
                         {t(
-                          "Kéo thả nhiều video vào đây hoặc",
-                          "Drag & drop multiple videos here or"
+                          "Kéo thả một hoặc nhiều video vào đây hoặc",
+                          "Drag & drop one or more videos here or"
                         )}{" "}
                         <span className="text-[#268bd2]">
-                          {t("chọn nhiều file", "select multiple files")}
+                          {t("chọn file", "browse files")}
                         </span>
                       </p>
 

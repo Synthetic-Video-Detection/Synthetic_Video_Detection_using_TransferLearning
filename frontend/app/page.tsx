@@ -1078,7 +1078,7 @@ function ScoreChart({
     <ResponsiveContainer width="100%" height={height}>
       <LineChart
         data={chartData}
-        margin={{ top: 10, right: 70, left: 0, bottom: 20 }}
+        margin={{ top: 28, right: 70, left: 0, bottom: 20 }}
         onClick={(state: any) => {
           if (state && state.activeLabel != null) {
             onSeek(Number(state.activeLabel));
@@ -1160,11 +1160,25 @@ function ScoreChart({
           stroke="#dc322f"
           strokeWidth={2}
           label={{
-            value: t("Thời điểm hiện tại", "Current time"),
-            position: "insideTopRight",
-            offset: 6,
-            fill: "#dc322f",
-            fontSize: 11,
+            content: (props: any) => {
+            const vb = props?.viewBox;
+            if (!vb) return null;
+            const text = t("Thời điểm hiện tại", "Current time");
+            // Giữ nhãn không bị cắt: sát trái -> neo đầu chữ, sát phải -> neo cuối chữ
+            const nearLeft = currentTime / end < 0.12;
+            const nearRight = currentTime / end > 0.88;
+            return (
+              <text
+                x={vb.x + (nearLeft ? 4 : nearRight ? -4 : 0)}
+                y={vb.y - 8}
+                fill="#dc322f"
+                fontSize={11}
+                textAnchor={nearLeft ? "start" : nearRight ? "end" : "middle"}
+              >
+                {text}
+              </text>
+            );
+            },
           }}
         />
       </LineChart>

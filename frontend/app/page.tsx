@@ -24,8 +24,6 @@ import {
   Download,
   Languages,
   ChevronDown,
-  Link2,
-  ExternalLink,
 } from "lucide-react";
 import {
   LineChart,
@@ -49,327 +47,6 @@ type Lang = "vi" | "en";
 let CURRENT_LANG: Lang = "vi";
 function t(vi: string, en: string): string {
   return CURRENT_LANG === "vi" ? vi : en;
-}
-
-// ── Bộ phân tích & nhúng URL (YouTube, TikTok, Instagram, Facebook) ─────
-export type EmbedPlatform =
-  | "youtube"
-  | "tiktok"
-  | "instagram"
-  | "facebook"
-  | "direct"
-  | "unknown";
-
-export type EmbedInfo = {
-  platform: EmbedPlatform;
-  platformLabel: string;
-  embedUrl: string | null;
-  originalUrl: string;
-  aspect: "16:9" | "9:16";
-  videoId?: string;
-  needsShortlinkResolve?: boolean;
-};
-
-export function parseVideoEmbed(rawUrl: string): EmbedInfo | null {
-  const trimmed = rawUrl.trim();
-  if (!trimmed) return null;
-
-  let parsed: URL;
-  try {
-    parsed = new URL(trimmed.startsWith("http") ? trimmed : `https://${trimmed}`);
-  } catch {
-    return null;
-  }
-
-  const host = parsed.hostname.replace(/^www\./i, "").toLowerCase();
-  const path = parsed.pathname;
-  const fullUrl = parsed.toString();
-
-  // 1. YouTube (watch, youtu.be, shorts, embed)
-  if (
-    host === "youtube.com" ||
-    host === "m.youtube.com" ||
-    host === "youtu.be" ||
-    host === "youtube-nocookie.com"
-  ) {
-    let videoId = "";
-    let isShorts = false;
-
-    if (host === "youtu.be") {
-      videoId = path.split("/").filter(Boolean)[0] ?? "";
-    } else if (path.startsWith("/shorts/")) {
-      videoId = path.split("/")[2] ?? "";
-      isShorts = true;
-    } else if (path.startsWith("/embed/")) {
-      videoId = path.split("/")[2] ?? "";
-    } else {
-      videoId = parsed.searchParams.get("v") ?? "";
-    }
-
-    videoId = videoId.replace(/[^a-zA-Z0-9_-]/g, "");
-    if (videoId) {
-      return {
-        platform: "youtube",
-        platformLabel: isShorts ? "YouTube Shorts" : "YouTube",
-        embedUrl: `https://www.youtube.com/embed/${videoId}?rel=0&modestbranding=1&playsinline=1`,
-        originalUrl: fullUrl,
-        aspect: isShorts ? "9:16" : "16:9",
-        videoId,
-      };
-    }
-  }
-
-  // 2. TikTok
-  if (
-    host === "tiktok.com" ||
-    host.endsWith(".tiktok.com")
-  ) {
-    // Dạng chuẩn: /@user/video/7123456789012345678 hoặc /v/7123456789012345678
-    const matchVideo =
-      path.match(/\/video\/(\d+)/i) ||
-      path.match(/\/v\/(\d+)/i) ||
-      path.match(/\/embed\/v2\/(\d+)/i) ||
-      path.match(/\/player\/v1\/(\d+)/i);
-
-    if (matchVideo && matchVideo[1]) {
-      const videoId = matchVideo[1];
-      return {
-        platform: "tiktok",
-        platformLabel: "TikTok",
-        embedUrl: `https://www.tiktok.com/player/v1/${videoId}?music_info=1&description=1&rel=0`,
-        originalUrl: fullUrl,
-        aspect: "9:16",
-        videoId,
-      };
-    }
-
-    // Dạng link rút gọn vt.tiktok.com / vm.tiktok.com / tiktok.com/t/...
-    return {
-      platform: "tiktok",
-      platformLabel: "TikTok",
-      embedUrl: null,
-      originalUrl: fullUrl,
-      aspect: "9:16",
-      needsShortlinkResolve: true,
-    };
-  }
-
-  // 3. Instagram (Reel, Post, IGTV)
-  if (host === "instagram.com" || host === "instagr.am") {
-    const matchIg = path.match(/\/(reel|reels|p|tv)\/([A-Za-z0-9_-]+)/i);
-    if (matchIg && matchIg[2]) {
-      const rawType = matchIg[1].toLowerCase();
-      const normalizedType = rawType === "reels" ? "reel" : rawType;
-      const code = matchIg[2];
-      return {
-        platform: "instagram",
-        platformLabel: normalizedType === "reel" ? "Instagram Reels" : "Instagram",
-        embedUrl: `https://www.instagram.com/${normalizedType}/${code}/embed/captioned/`,
-        originalUrl: fullUrl,
-        aspect: "9:16",
-        videoId: code,
-      };
-    }
-  }
-
-  // 4. Facebook (watch, videos, reel, share/v, share/r, fb.watch)
-  if (
-    host === "facebook.com" ||
-    host.endsWith(".facebook.com") ||
-    host === "fb.watch" ||
-    host === "fb.com"
-  ) {
-    const isReel =
-      /\/reel\//i.test(path) ||
-      /\/share\/r\//i.test(path);
-
-    const encodedHref = encodeURIComponent(fullUrl);
-    return {
-      platform: "facebook",
-      platformLabel: isReel ? "Facebook Reels" : "Facebook Video",
-      embedUrl: `https://www.facebook.com/plugins/video.php?href=${encodedHref}&show_text=false&autoplay=false`,
-      originalUrl: fullUrl,
-      aspect: isReel ? "9:16" : "16:9",
-    };
-  }
-
-  // 5. Link file video trực tiếp (.mp4, .webm, .mov, .ogg)
-  if (/\.(mp4|webm|mov|ogg)(\?.*)?$/i.test(fullUrl)) {
-    return {
-      platform: "direct",
-      platformLabel: "Direct Video",
-      embedUrl: fullUrl,
-      originalUrl: fullUrl,
-      aspect: "16:9",
-    };
-  }
-
-  return {
-    platform: "unknown",
-    platformLabel: parsed.hostname,
-    embedUrl: null,
-    originalUrl: fullUrl,
-    aspect: "16:9",
-  };
-}
-
-// Component hiển thị Video Embed tự động scale chuẩn tỷ lệ
-function SocialVideoEmbed({
-  url,
-  theme,
-  videoRef,
-  onTimeUpdate,
-}: {
-  url: string;
-  theme: Theme;
-  videoRef?: React.RefObject<HTMLVideoElement | null>;
-  onTimeUpdate?: () => void;
-}) {
-  const baseInfo = useMemo(() => parseVideoEmbed(url), [url]);
-  const [resolvedTikTokId, setResolvedTikTokId] = useState<string | null>(null);
-  const [resolving, setResolving] = useState(false);
-
-  // Tự động thử lấy videoId từ oEmbed nếu người dùng dán link rút gọn TikTok (vt.tiktok.com / vm.tiktok.com)
-  useEffect(() => {
-    setResolvedTikTokId(null);
-    if (!baseInfo?.needsShortlinkResolve) return;
-
-    let cancelled = false;
-    setResolving(true);
-
-    fetch(
-      `https://www.tiktok.com/oembed?url=${encodeURIComponent(baseInfo.originalUrl)}`
-    )
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (cancelled || !data) return;
-        const idFromProduct = data.embed_product_id;
-        const idFromHtml =
-          typeof data.html === "string"
-            ? data.html.match(/data-video-id="(\d+)"/)?.[1]
-            : null;
-        const finalId = idFromProduct || idFromHtml;
-        if (finalId) setResolvedTikTokId(String(finalId));
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setResolving(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [baseInfo]);
-
-  if (!baseInfo) return null;
-
-  const finalEmbedUrl =
-    baseInfo.platform === "tiktok" && resolvedTikTokId
-      ? `https://www.tiktok.com/player/v1/${resolvedTikTokId}?music_info=1&description=1&rel=0`
-      : baseInfo.embedUrl;
-
-  const isVertical = baseInfo.aspect === "9:16";
-
-  const platformBadgeColors: Record<EmbedPlatform, string> = {
-    youtube: "bg-[#dc322f]/15 text-[#dc322f] border-[#dc322f]/40",
-    tiktok: "bg-[#2aa198]/15 text-[#2aa198] border-[#2aa198]/40",
-    instagram: "bg-[#d33682]/15 text-[#d33682] border-[#d33682]/40",
-    facebook: "bg-[#268bd2]/15 text-[#268bd2] border-[#268bd2]/40",
-    direct: "bg-[#859900]/15 text-[#859900] border-[#859900]/40",
-    unknown: "bg-[#657b83]/15 text-[#93a1a1] border-[#657b83]/40",
-  };
-
-  return (
-    <div className="space-y-2.5">
-      {/* Thanh thông tin nền tảng + nút mở link gốc */}
-      <div className="flex items-center justify-between gap-2 text-xs">
-        <div className="flex items-center gap-2">
-          <span
-            className={`px-2.5 py-0.5 border font-semibold uppercase tracking-wider text-[10px] ${
-              platformBadgeColors[baseInfo.platform]
-            }`}
-          >
-            {baseInfo.platformLabel}
-          </span>
-          <span className={`font-mono-tech text-[11px] ${theme.textSub}`}>
-            {isVertical ? "9:16 Vertical" : "16:9 Landscape"}
-          </span>
-        </div>
-
-        <a
-          href={baseInfo.originalUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 text-[#268bd2] hover:underline font-medium"
-        >
-          {t("Mở trang gốc", "Open original")}
-          <ExternalLink className="w-3 h-3" />
-        </a>
-      </div>
-
-      {/* Khung chứa tự động scale theo tỷ lệ ngang/dọc */}
-      <div
-        className={`relative w-full ${theme.bgMain} border ${theme.border} overflow-hidden flex items-center justify-center p-2`}
-      >
-        {baseInfo.platform === "direct" && finalEmbedUrl ? (
-          <div className="w-full aspect-video bg-black overflow-hidden">
-            <video
-              ref={videoRef}
-              src={finalEmbedUrl}
-              controls
-              onTimeUpdate={onTimeUpdate}
-              onSeeked={onTimeUpdate}
-              className="w-full h-full object-contain"
-            />
-          </div>
-        ) : finalEmbedUrl ? (
-          <div
-            className={
-              isVertical
-                ? "relative w-full max-w-[325px] aspect-[9/16] max-h-[560px] mx-auto bg-black overflow-hidden shadow-inner"
-                : "relative w-full aspect-video bg-black overflow-hidden"
-            }
-          >
-            <iframe
-              key={finalEmbedUrl}
-              src={finalEmbedUrl}
-              title={`${baseInfo.platformLabel} Embed Preview`}
-              className="absolute inset-0 w-full h-full border-0"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
-              allowFullScreen
-              loading="lazy"
-              referrerPolicy="strict-origin-when-cross-origin"
-            />
-          </div>
-        ) : resolving ? (
-          <div className="py-16 flex flex-col items-center justify-center gap-2 text-xs">
-            <RefreshCw className="w-6 h-6 text-[#268bd2] animate-spin" />
-            <span className={theme.textSub}>
-              {t(
-                "Đang giải mã link rút gọn TikTok...",
-                "Resolving TikTok shortlink..."
-              )}
-            </span>
-          </div>
-        ) : (
-          <div className="py-12 px-6 text-center space-y-2">
-            <Film className={`w-10 h-10 mx-auto ${theme.textSub} opacity-70`} />
-            <p className={`text-xs font-medium ${theme.textHeading}`}>
-              {baseInfo.platform === "tiktok"
-                ? t(
-                    "Link TikTok rút gọn cần mở thành link đầy đủ (@user/video/ID) để nhúng trực tiếp, nhưng bạn vẫn có thể bấm 'Chạy pipeline AI' ngay.",
-                    "Shortened TikTok links need the full URL (@user/video/ID) for live preview, or click 'Run AI pipeline' directly."
-                  )
-                : t(
-                    "Không hỗ trợ nhúng trực tiếp URL này, nhưng vẫn có thể gửi link về Backend để phân tích.",
-                    "Live embed is unavailable for this URL, but you can still analyze it via the Backend."
-                  )}
-            </p>
-          </div>
-        )}
-      </div>
-    </div>
-  );
 }
 
 // ── Nền Dot-Matrix Glow ──────────────────────────────────────────────────
@@ -565,7 +242,6 @@ type BatchItem = {
   id: string;
   name: string;
   file?: File;
-  sourceUrl?: string;
   previewUrl?: string;
   thumbnailUrl?: string;
   videoTitle?: string;
@@ -642,6 +318,7 @@ function parseBackendResult(r: any): VideoResult {
   };
 }
 
+const BACKEND_PING_MS = 8000;
 const POLL_INTERVAL_MS = 2000;
 const MAX_POLL_FAILURES = 60;
 
@@ -753,15 +430,6 @@ async function analyzeVideoFile(
   const formData = new FormData();
   formData.append("file", file);
   return postToBackend("/upload/", formData, signal);
-}
-
-async function analyzeVideoUrl(
-  url: string,
-  signal?: AbortSignal
-): Promise<VideoResult> {
-  const formData = new FormData();
-  formData.append("url", url);
-  return postToBackend("/upload_url/", formData, signal);
 }
 
 function stringSeed(str: string): number {
@@ -1373,6 +1041,7 @@ function ScoreChart({
   onSeek,
   isDarkMode,
   threshold,
+  duration = 0,
   height = 340,
 }: {
   data: ScorePoint[];
@@ -1380,12 +1049,26 @@ function ScoreChart({
   onSeek: (t: number) => void;
   isDarkMode: boolean;
   threshold: number;
+  duration?: number;
   height?: number;
 }) {
+  // Mỗi điểm điểm số nằm ở GIỮA cửa sổ (≈0.5s), nên đường kẻ bắt đầu trễ và
+  // kết thúc sớm so với video. Kéo dài hai đầu tới 0s và hết video để không bị hụt.
+  const { chartData, end } = useMemo(() => {
+    if (data.length === 0) return { chartData: data, end: 1 };
+    const first = data[0];
+    const last = data[data.length - 1];
+    const end = Math.max(duration, last.time, 1);
+    const pts = [...data];
+    if (first.time > 0) pts.unshift({ time: 0, score: first.score });
+    if (end > last.time) pts.push({ time: end, score: last.score });
+    return { chartData: pts, end };
+  }, [data, duration]);
+
   return (
     <ResponsiveContainer width="100%" height={height}>
       <LineChart
-        data={data}
+        data={chartData}
         margin={{ top: 10, right: 70, left: 0, bottom: 20 }}
         onClick={(state: any) => {
           if (state && state.activeLabel != null) {
@@ -1401,7 +1084,8 @@ function ScoreChart({
         <XAxis
           dataKey="time"
           type="number"
-          domain={["dataMin", "dataMax"]}
+          domain={[0, end]}
+          allowDataOverflow
           tick={{
             fill: isDarkMode ? "#c2d6d9" : "#3a4f57",
             fontSize: 12,
@@ -1826,6 +1510,7 @@ function DashboardView({
   activeBatchEntry,
   batchVideoRef,
   batchCurrentTime,
+  batchDuration,
   handleBatchTimeUpdate,
   handleBatchSeek,
 }: {
@@ -1863,6 +1548,7 @@ function DashboardView({
   activeBatchEntry: VideoResult | undefined;
   batchVideoRef: React.RefObject<HTMLVideoElement | null>;
   batchCurrentTime: number;
+  batchDuration: number;
   handleBatchTimeUpdate: () => void;
   handleBatchSeek: (t: number) => void;
 }) {
@@ -2342,18 +2028,12 @@ function DashboardView({
                     src={selectedBatchItem.previewUrl}
                     controls
                     onTimeUpdate={handleBatchTimeUpdate}
+                    onLoadedMetadata={handleBatchTimeUpdate}
                     onSeeked={handleBatchTimeUpdate}
                     className="w-full h-full object-contain"
                   />
                 </div>
-              ) : selectedBatchItem.sourceUrl ? (
-                <SocialVideoEmbed
-                  url={selectedBatchItem.sourceUrl}
-                  theme={theme}
-                  videoRef={batchVideoRef}
-                  onTimeUpdate={handleBatchTimeUpdate}
-                />
-              ) : null}
+) : null}
             </div>
 
             {selectedBatchItem.status === "error" && (
@@ -2386,6 +2066,7 @@ function DashboardView({
                       onSeek={handleBatchSeek}
                       isDarkMode={isDarkMode}
                       threshold={threshold}
+                      duration={batchDuration}
                       height={260}
                     />
                   </div>
@@ -2406,12 +2087,7 @@ function DashboardView({
 }
 
 export default function SyntheticVideoDetector() {
-  const [activeTab, setActiveTab] = useState<"single" | "batch">("single");
   const [appMode, setAppMode] = useState<"classic" | "dashboard">("classic");
-
-  // Chế độ nhập ở Video đơn: Tải file hoặc Dán URL (YouTube, TikTok, Instagram, Facebook)
-  const [singleInputMode, setSingleInputMode] = useState<"file" | "url">("file");
-  const [pastedUrl, setPastedUrl] = useState("");
 
   const [dashboardSearch, setDashboardSearch] = useState("");
   const [dashboardStatusFilter, setDashboardStatusFilter] =
@@ -2458,15 +2134,12 @@ export default function SyntheticVideoDetector() {
   const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD);
   const [mockMode, setMockMode] = useState(false);
 
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const singleAbortRef = useRef<AbortController | null>(null);
   const batchAbortRef = useRef<AbortController | null>(null);
   const batchCancelledRef = useRef(false);
-  const [singleEntry, setSingleEntry] = useState<VideoResult | null>(null);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const [batchDuration, setBatchDuration] = useState(0);
+  const [backendStatus, setBackendStatus] = useState<
+    "checking" | "online" | "offline"
+  >("checking");
 
   const [batchItems, setBatchItems] = useState<BatchItem[]>([]);
   const [isBatchRunning, setIsBatchRunning] = useState(false);
@@ -2482,18 +2155,6 @@ export default function SyntheticVideoDetector() {
   } | null>(null);
 
   useEffect(() => {
-    if (!selectedFile) {
-      setVideoUrl(null);
-      return;
-    }
-
-    const url = URL.createObjectURL(selectedFile);
-    setVideoUrl(url);
-
-    return () => URL.revokeObjectURL(url);
-  }, [selectedFile]);
-
-  useEffect(() => {
     return () => {
       batchUrlsRef.current.forEach((u) => URL.revokeObjectURL(u));
     };
@@ -2501,7 +2162,52 @@ export default function SyntheticVideoDetector() {
 
   useEffect(() => {
     setBatchCurrentTime(0);
+    setBatchDuration(0);
   }, [selectedBatchId]);
+
+  // Kiểm tra backend (Colab + ngrok) thật sự đang online, kiểm tra định kỳ
+  useEffect(() => {
+    if (mockMode) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const ping = async () => {
+      if (document.hidden) {
+        if (!cancelled) timer = setTimeout(ping, BACKEND_PING_MS);
+        return;
+      }
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 6000);
+      let ok = false;
+      try {
+        const res = await fetch(NGROK_BASE + "/", {
+          headers: { "ngrok-skip-browser-warning": "true" },
+          signal: controller.signal,
+          cache: "no-store",
+        });
+        if (res.ok) {
+          const body = await res.json().catch(() => null);
+          ok = body?.message === "online";
+        }
+      } catch {
+        ok = false;
+      } finally {
+        clearTimeout(timeout);
+      }
+      if (cancelled) return;
+      setBackendStatus(ok ? "online" : "offline");
+      timer = setTimeout(ping, BACKEND_PING_MS);
+    };
+
+    setBackendStatus("checking");
+    ping();
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [mockMode]);
 
   const theme: Theme = {
     bgMain: isDarkMode ? "bg-[#0b3c4d]" : "bg-[#fdf6e3]",
@@ -2516,99 +2222,6 @@ export default function SyntheticVideoDetector() {
     btnCancel: isDarkMode
       ? "bg-[#052630] hover:bg-[#194b57] text-[#e6f1f2] font-medium"
       : "bg-[#fdf6e3] hover:bg-[#e2dbc7] text-[#073642] font-medium",
-  };
-
-  const tabBtn = (isActive: boolean) =>
-    `flex items-center gap-2 px-4 py-2.5 text-sm border transition-all ${
-      isActive
-        ? "bg-[#268bd2] border-[#268bd2] text-white font-bold shadow-sm"
-        : `${theme.bgMain} ${theme.border} ${theme.textHeading} font-semibold hover:border-[#268bd2] hover:text-[#268bd2]`
-    }`;
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setSelectedFile(e.target.files[0]);
-      setSingleEntry(null);
-    }
-  };
-
-  const parsedEmbed = useMemo(() => parseVideoEmbed(pastedUrl), [pastedUrl]);
-
-  const handleAnalyze = async () => {
-    const isUrlMode = singleInputMode === "url";
-    if (!isUrlMode && !selectedFile) return;
-    if (isUrlMode && !parsedEmbed) return;
-
-    if (isBatchRunning) cancelBatch();
-
-    const controller = new AbortController();
-    singleAbortRef.current = controller;
-
-    setIsAnalyzing(true);
-    setSingleEntry(null);
-    setCurrentTime(0);
-
-    try {
-      let entry: VideoResult;
-      if (mockMode) {
-        entry = await generateMockResult(
-          isUrlMode ? parsedEmbed!.originalUrl : selectedFile!.name
-        );
-      } else if (isUrlMode) {
-        entry = await analyzeVideoUrl(
-          parsedEmbed!.originalUrl,
-          controller.signal
-        );
-      } else {
-        entry = await analyzeVideoFile(selectedFile!, controller.signal);
-      }
-
-      if (controller.signal.aborted) throw abortError();
-      setSingleEntry(entry);
-    } catch (error: any) {
-      if (isAbortError(error)) return;
-      console.error("API Analyze Error:", error);
-      const rawMsg = typeof error?.message === "string" ? error.message : "";
-      const isNetworkErr =
-        !rawMsg || /failed to fetch|networkerror|load failed/i.test(rawMsg);
-      const friendlyMsg = isNetworkErr
-        ? t(
-            "Không thể kết nối tới model AI qua Ngrok. Hãy kiểm tra Colab/Ngrok đã chạy chưa hoặc bật 'Chế độ test (dữ liệu giả)' ở Cài đặt nâng cao.",
-            "Cannot reach the AI model through Ngrok. Please check if Colab/Ngrok is running or enable 'Test mode (mock data)' in Advanced settings."
-          )
-        : rawMsg;
-      setSingleEntry({
-        result: { isSynthetic: false, confidence: 0, probability_ai: 0 },
-        scores: [],
-        error: friendlyMsg,
-      });
-      alert(friendlyMsg);
-    } finally {
-      if (singleAbortRef.current === controller) {
-        singleAbortRef.current = null;
-        setIsAnalyzing(false);
-      }
-    }
-  };
-
-  const cancelSingleAnalyze = () => {
-    singleAbortRef.current?.abort();
-    singleAbortRef.current = null;
-    setIsAnalyzing(false);
-    setSingleEntry(null);
-  };
-
-  const handleTimeUpdate = () => {
-    if (videoRef.current) {
-      setCurrentTime(videoRef.current.currentTime);
-    }
-  };
-
-  const handleSeek = (time: number) => {
-    if (videoRef.current) {
-      videoRef.current.currentTime = time;
-      setCurrentTime(time);
-    }
   };
 
   const handleBatchFilesSelected = (
@@ -2701,8 +2314,6 @@ export default function SyntheticVideoDetector() {
     try {
       const entry = mockMode
         ? await generateMockResult(item.name, labelMap.get(item.name))
-        : item.sourceUrl
-        ? await analyzeVideoUrl(item.sourceUrl, controller.signal)
         : await analyzeVideoFile(item.file!, controller.signal);
 
       if (controller.signal.aborted) throw abortError();
@@ -2753,8 +2364,6 @@ export default function SyntheticVideoDetector() {
 
     if (queue.length === 0) return;
 
-    if (singleAbortRef.current) cancelSingleAnalyze();
-
     batchCancelledRef.current = false;
     setIsBatchRunning(true);
 
@@ -2773,8 +2382,12 @@ export default function SyntheticVideoDetector() {
   };
 
   const handleBatchTimeUpdate = () => {
-    if (batchVideoRef.current) {
-      setBatchCurrentTime(batchVideoRef.current.currentTime);
+    const v = batchVideoRef.current;
+    if (v) {
+      setBatchCurrentTime(v.currentTime);
+      if (Number.isFinite(v.duration) && v.duration > 0) {
+        setBatchDuration(v.duration);
+      }
     }
   };
 
@@ -2797,11 +2410,6 @@ export default function SyntheticVideoDetector() {
     () => computeMetrics(batchItems, labelMap, threshold),
     [batchItems, labelMap, threshold]
   );
-
-  const singleResult =
-    singleEntry && !singleEntry.error ? singleEntry.result : null;
-
-  const singleScores = singleEntry?.scores ?? [];
 
   const activeBatchEntry = selectedBatchItem?.result;
 
@@ -2886,10 +2494,36 @@ export default function SyntheticVideoDetector() {
               </span>
             ) : (
               <span
-                className={`flex items-center gap-1.5 whitespace-nowrap text-[#2aa198] ${theme.bgMain} px-3 py-1 border ${theme.border}`}
+                className={`flex items-center gap-1.5 whitespace-nowrap ${theme.bgMain} px-3 py-1 border ${
+                  backendStatus === "online"
+                    ? "text-[#2aa198] border-[#2aa198]/50"
+                    : backendStatus === "offline"
+                    ? "text-[#dc322f] border-[#dc322f]/50"
+                    : `${theme.textSub} ${theme.border}`
+                }`}
+                title={
+                  backendStatus === "offline"
+                    ? t(
+                        "Không liên lạc được backend. Kiểm tra Colab đã chạy và URL ngrok còn đúng chưa.",
+                        "Cannot reach the backend. Check that Colab is running and the ngrok URL is still valid."
+                      )
+                    : undefined
+                }
               >
-                <span className="w-2 h-2 bg-[#2aa198] animate-pulse"></span>
-                {t("Đã kết nối", "Connected")}
+                <span
+                  className={`w-2 h-2 ${
+                    backendStatus === "online"
+                      ? "bg-[#2aa198] animate-pulse"
+                      : backendStatus === "offline"
+                      ? "bg-[#dc322f]"
+                      : "bg-[#b58900] animate-pulse"
+                  }`}
+                ></span>
+                {backendStatus === "online"
+                  ? t("Đã kết nối", "Connected")
+                  : backendStatus === "offline"
+                  ? t("Mất kết nối", "Disconnected")
+                  : t("Đang kiểm tra...", "Checking...")}
               </span>
             )}
 
@@ -2954,402 +2588,6 @@ export default function SyntheticVideoDetector() {
         )}
         {appMode === "classic" ? (
           <>
-            <div
-              className={`tech-panel ${theme.bgCard} border ${theme.border} p-2 mb-8 inline-flex flex-wrap items-center gap-2.5`}
-            >
-              <button
-                className={tabBtn(activeTab === "single")}
-                onClick={() => setActiveTab("single")}
-              >
-                <Film className="w-4 h-4" /> {t("Video đơn", "Single video")}
-              </button>
-
-              <button
-                className={tabBtn(activeTab === "batch")}
-                onClick={() => setActiveTab("batch")}
-              >
-                <Layers className="w-4 h-4" />{" "}
-                {t("Xử lý hàng loạt", "Batch processing")}
-              </button>
-            </div>
-
-            {activeTab === "single" && (
-              <>
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                  <div className="lg:col-span-7 space-y-6">
-                    <div
-                      className={`tech-panel ${theme.bgCard} border ${theme.border} p-6`}
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
-                        <h2
-                          className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider flex items-center gap-2`}
-                        >
-                          <Play className="w-4 h-4 text-[#2aa198]" />{" "}
-                          {t("Video đầu vào", "Video input")}
-                        </h2>
-
-                        {/* Nút chuyển đổi giữa Upload File và Paste URL */}
-                        <div
-                          className={`inline-flex items-center p-1 border ${theme.border} ${theme.bgMain} text-xs`}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSingleInputMode("file");
-                              setSingleEntry(null);
-                            }}
-                            className={`px-3 py-1 flex items-center gap-1.5 transition-colors ${
-                              singleInputMode === "file"
-                                ? "bg-[#268bd2] text-white font-semibold"
-                                : `${theme.textHeading} hover:bg-[#268bd2]/15`
-                            }`}
-                          >
-                            <Upload className="w-3.5 h-3.5" />
-                            {t("Tải file", "Upload File")}
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSingleInputMode("url");
-                              setSingleEntry(null);
-                            }}
-                            className={`px-3 py-1 flex items-center gap-1.5 transition-colors ${
-                              singleInputMode === "url"
-                                ? "bg-[#268bd2] text-white font-semibold"
-                                : `${theme.textHeading} hover:bg-[#268bd2]/15`
-                            }`}
-                          >
-                            <Link2 className="w-3.5 h-3.5" />
-                            {t("Dán URL", "Paste URL")}
-                          </button>
-                        </div>
-                      </div>
-
-                      {singleInputMode === "file" ? (
-                        !selectedFile ? (
-                          <label
-                            className={`border border-dashed ${theme.border} hover:border-[#2aa198] ${theme.inputBg} p-12 flex flex-col items-center justify-center cursor-pointer transition-colors group`}
-                          >
-                            <Upload
-                              className={`w-12 h-12 ${theme.textSub} group-hover:text-[#2aa198] mb-4 transition-colors`}
-                            />
-
-                            <p
-                              className={`text-sm ${theme.textHeading} font-medium mb-1`}
-                            >
-                              {t(
-                                "Kéo thả video vào đây hoặc",
-                                "Drag and drop video here or"
-                              )}{" "}
-                              <span className="text-[#268bd2]">
-                                {t("chọn file", "browse files")}
-                              </span>
-                            </p>
-
-                            <p className={`text-xs ${theme.textMain}`}>
-                              {t(
-                                "Hỗ trợ MP4, MOV, AVI (tối đa 100MB)",
-                                "Supports MP4, MOV, AVI (max 100MB)"
-                              )}
-                            </p>
-
-                            <input
-                              type="file"
-                              accept={"video/" + "*"}
-                              className="hidden"
-                              onChange={handleFileChange}
-                            />
-                          </label>
-                        ) : (
-                          <div className="space-y-4">
-                            <div
-                              className={`relative aspect-video ${theme.bgMain} border ${theme.border} overflow-hidden flex items-center justify-center`}
-                            >
-                              {videoUrl && (
-                                <video
-                                  ref={videoRef}
-                                  src={videoUrl}
-                                  controls
-                                  onTimeUpdate={handleTimeUpdate}
-                                  onSeeked={handleTimeUpdate}
-                                  className="w-full h-full object-contain"
-                                />
-                              )}
-                            </div>
-
-                            <div className="flex gap-3">
-                              <button
-                                onClick={handleAnalyze}
-                                disabled={isAnalyzing}
-                                className="flex-1 bg-[#268bd2] hover:brightness-110 text-white font-bold py-3 px-6 border border-[#268bd2] flex items-center justify-center gap-2 transition-all disabled:opacity-50"
-                              >
-                                {isAnalyzing ? (
-                                  <>
-                                    <RefreshCw className="w-5 h-5 animate-spin" />{" "}
-                                    {t(
-                                      "Đang phân tích khung hình...",
-                                      "Analyzing frames..."
-                                    )}
-                                  </>
-                                ) : (
-                                  <>
-                                    <Cpu className="w-5 h-5" />{" "}
-                                    {t("Chạy pipeline AI", "Run AI pipeline")}
-                                  </>
-                                )}
-                              </button>
-
-                              <button
-                                onClick={() => {
-                                  if (isAnalyzing) {
-                                    cancelSingleAnalyze();
-                                  } else {
-                                    setSelectedFile(null);
-                                    setSingleEntry(null);
-                                  }
-                                }}
-                                className={`px-4 py-3 border ${theme.border} ${theme.btnCancel} text-sm font-medium`}
-                              >
-                                {t("Hủy", "Cancel")}
-                              </button>
-                            </div>
-                          </div>
-                        )
-                      ) : (
-                        /* Chế độ Paste URL kèm tự động nhúng & scale video */
-                        <div className="space-y-4">
-                          <div className="relative flex items-center">
-                            <Link2
-                              className={`w-4 h-4 absolute left-3.5 ${theme.textSub} pointer-events-none`}
-                            />
-                            <input
-                              type="url"
-                              value={pastedUrl}
-                              onChange={(e) => {
-                                setPastedUrl(e.target.value);
-                                setSingleEntry(null);
-                              }}
-                              placeholder={t(
-                                "Dán link YouTube, TikTok, Instagram hoặc Facebook...",
-                                "Paste a YouTube, TikTok, Instagram, or Facebook link..."
-                              )}
-                              className={`w-full pl-10 pr-9 py-2.5 text-xs border ${theme.border} ${theme.inputBg} ${theme.textHeading} outline-none focus:border-[#2aa198]`}
-                            />
-                            {pastedUrl && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setPastedUrl("");
-                                  setSingleEntry(null);
-                                }}
-                                className={`absolute right-2.5 p-1 ${theme.textSub} hover:opacity-80`}
-                                aria-label={t("Xóa URL", "Clear URL")}
-                              >
-                                <X className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                          </div>
-
-                          {/* Gợi ý nhanh các nền tảng được hỗ trợ */}
-                          <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                            <span className={theme.textSub}>
-                              {t("Hỗ trợ nhúng trực tiếp:", "Live embed supported:")}
-                            </span>
-                            {["YouTube", "TikTok", "Instagram", "Facebook"].map(
-                              (pf) => (
-                                <span
-                                  key={pf}
-                                  className={`px-2 py-0.5 border ${theme.border} ${theme.bgMain} ${theme.textHeading} font-medium`}
-                                >
-                                  {pf}
-                                </span>
-                              )
-                            )}
-                          </div>
-
-                          {/* Khung Preview tự động nhúng ngay khi paste */}
-                          {parsedEmbed ? (
-                            <>
-                              <SocialVideoEmbed
-                                url={pastedUrl}
-                                theme={theme}
-                                videoRef={videoRef}
-                                onTimeUpdate={handleTimeUpdate}
-                              />
-
-                              <div className="flex gap-3 pt-1">
-                                <button
-                                  onClick={handleAnalyze}
-                                  disabled={isAnalyzing}
-                                  className="flex-1 bg-[#268bd2] hover:brightness-110 text-white font-bold py-3 px-6 border border-[#268bd2] flex items-center justify-center gap-2 transition-all disabled:opacity-50"
-                                >
-                                  {isAnalyzing ? (
-                                    <>
-                                      <RefreshCw className="w-5 h-5 animate-spin" />{" "}
-                                      {t(
-                                        "Đang tải & phân tích...",
-                                        "Downloading & analyzing..."
-                                      )}
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Cpu className="w-5 h-5" />{" "}
-                                      {t("Chạy pipeline AI", "Run AI pipeline")}
-                                    </>
-                                  )}
-                                </button>
-
-                                <button
-                                  onClick={() => {
-                                    if (isAnalyzing) {
-                                      cancelSingleAnalyze();
-                                    } else {
-                                      setPastedUrl("");
-                                      setSingleEntry(null);
-                                    }
-                                  }}
-                                  className={`px-4 py-3 border ${theme.border} ${theme.btnCancel} text-sm font-medium`}
-                                >
-                                  {t("Hủy", "Cancel")}
-                                </button>
-                              </div>
-                            </>
-                          ) : (
-                            <div
-                              className={`border border-dashed ${theme.border} ${theme.inputBg} p-10 text-center space-y-2`}
-                            >
-                              <Film
-                                className={`w-10 h-10 mx-auto ${theme.textSub} opacity-75`}
-                              />
-                              <p
-                                className={`text-xs font-medium ${theme.textHeading}`}
-                              >
-                                {t(
-                                  "Dán đường dẫn video vào ô phía trên để xem trước trực tiếp tại đây.",
-                                  "Paste a video share link above to preview it live right here."
-                                )}
-                              </p>
-                              <p className={`text-[11px] ${theme.textSub}`}>
-                                {t(
-                                  "Tự động căn chỉnh tỷ lệ 16:9 (YouTube/Facebook) và 9:16 (TikTok/Shorts/Reels).",
-                                  "Automatically scales to 16:9 (YouTube/Facebook) or 9:16 (TikTok/Shorts/Reels)."
-                                )}
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="lg:col-span-5 space-y-6">
-                    <div
-                      className={`tech-panel ${theme.bgCard} border ${theme.border} p-6 h-full flex flex-col justify-between`}
-                    >
-                      <div>
-                        <h2
-                          className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider mb-6 flex items-center gap-2`}
-                        >
-                          <BarChart2 className="w-4 h-4 text-[#268bd2]" />{" "}
-                          {t("Kết quả phân tích", "Analysis Results")}
-                        </h2>
-
-                        {!singleEntry && !isAnalyzing && (
-                          <div className={`text-center py-16 ${theme.textMain}`}>
-                            <Cpu
-                              className={`w-12 h-12 mx-auto mb-3 ${theme.textSub} opacity-80`}
-                            />
-                            <p className="text-sm">
-                              {t(
-                                "Chưa có dữ liệu. Hãy tải video lên hoặc dán URL và chạy model.",
-                                "No data available. Upload a video or paste a URL and run the model."
-                              )}
-                            </p>
-                          </div>
-                        )}
-
-                        {isAnalyzing && (
-                          <div className="space-y-6 py-8">
-                            <div className="animate-pulse space-y-3">
-                              <div className={`h-4 ${theme.bgMain} w-3/4`}></div>
-                              <div className={`h-10 ${theme.bgMain}`}></div>
-                              <div className={`h-20 ${theme.bgMain}`}></div>
-                            </div>
-
-                            <p className="text-xs text-center text-[#268bd2] animate-pulse">
-                              {t(
-                                "Extracting Spatial & Temporal Features...",
-                                "Extracting spatial & temporal features..."
-                              )}
-                            </p>
-
-                            <p className={`text-xs text-center ${theme.textSub}`}>
-                              {t("Đã chạy:", "Elapsed:")} <LiveTimer />
-                            </p>
-                          </div>
-                        )}
-
-                        {!isAnalyzing && singleEntry?.error && (
-                          <div className="text-center py-16 text-[#dc322f]">
-                            <X className="w-12 h-12 mx-auto mb-3 opacity-60" />
-                            <p className="text-sm">
-                              {t("Lỗi:", "Error:")} {singleEntry.error}
-                            </p>
-                          </div>
-                        )}
-
-                        {!isAnalyzing && singleResult && (
-                          <ResultSummary
-                            result={singleResult}
-                            theme={theme}
-                            threshold={threshold}
-                            processingTime={singleEntry?.processingTime}
-                          />
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {singleScores.length > 0 && !singleEntry?.error && (
-                  <div
-                    className={`${theme.bgCard} border ${theme.border} p-6 mt-8`}
-                  >
-                    <p className={`text-sm ${theme.textSub} mb-4`}>
-                      {t(
-                        "Phát video để xem dữ liệu theo thời gian thực bên dưới.",
-                        "Play the video to view real-time data below."
-                      )}
-                    </p>
-
-                    <h2
-                      className={`text-sm font-semibold ${theme.textHeading} uppercase tracking-wider mb-4 flex items-center gap-2`}
-                    >
-                      <BarChart2 className="w-4 h-4 text-[#268bd2]" />{" "}
-                      {t("Phân tích video", "Video Analysis")}
-                    </h2>
-
-                    <p className={`text-xs ${theme.textMain} mb-2`}>
-                      {t(
-                        "Bấm vào biểu đồ để tua video tới đúng thời điểm đó.",
-                        "Click the chart to seek the video to that moment."
-                      )}
-                    </p>
-
-                    <ScoreChart
-                      data={singleScores}
-                      currentTime={currentTime}
-                      onSeek={handleSeek}
-                      isDarkMode={isDarkMode}
-                      threshold={threshold}
-                    />
-                  </div>
-                )}
-              </>
-            )}
-
-            {activeTab === "batch" && (
               <div className="space-y-6">
                 <div
                   className={`tech-panel ${theme.bgCard} border ${theme.border} p-6`}
@@ -3501,18 +2739,12 @@ export default function SyntheticVideoDetector() {
                               src={selectedBatchItem.previewUrl}
                               controls
                               onTimeUpdate={handleBatchTimeUpdate}
+                              onLoadedMetadata={handleBatchTimeUpdate}
                               onSeeked={handleBatchTimeUpdate}
                               className="w-full h-full object-contain"
                             />
                           </div>
-                        ) : selectedBatchItem.sourceUrl ? (
-                          <SocialVideoEmbed
-                            url={selectedBatchItem.sourceUrl}
-                            theme={theme}
-                            videoRef={batchVideoRef}
-                            onTimeUpdate={handleBatchTimeUpdate}
-                          />
-                        ) : null}
+) : null}
                       </div>
                     </div>
 
@@ -3643,11 +2875,11 @@ export default function SyntheticVideoDetector() {
                         onSeek={handleBatchSeek}
                         isDarkMode={isDarkMode}
                         threshold={threshold}
+                        duration={batchDuration}
                       />
                     </div>
                   )}
               </div>
-            )}
           </>
         ) : (
           <DashboardView
@@ -3681,6 +2913,7 @@ export default function SyntheticVideoDetector() {
             activeBatchEntry={activeBatchEntry}
             batchVideoRef={batchVideoRef}
             batchCurrentTime={batchCurrentTime}
+            batchDuration={batchDuration}
             handleBatchTimeUpdate={handleBatchTimeUpdate}
             handleBatchSeek={handleBatchSeek}
           />
